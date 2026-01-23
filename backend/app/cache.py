@@ -49,11 +49,11 @@ class RedisCache:
     async def set(
         self,
         key: str,
-        value: str | dict[str, Any],
+        value: str | dict[str, Any] | list[Any],
         ttl: int | None = None,
     ) -> None:
         """Set a value in cache."""
-        if isinstance(value, dict):
+        if isinstance(value, (dict, list)):
             value = json.dumps(value)
         if ttl:
             await self.client.setex(key, ttl, value)
