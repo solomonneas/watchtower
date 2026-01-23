@@ -144,7 +144,7 @@ if [[ "$CONFIRM" =~ ^[Nn]$ ]]; then
 fi
 
 # Find template
-TEMPLATE=$(pveam list local 2>/dev/null | grep -E "ubuntu-2[24]|debian-12" | head -1 | awk '{print $1}')
+TEMPLATE=$(pveam list local 2>/dev/null | grep -E "ubuntu-24" | head -1 | awk '{print $1}')
 
 if [[ -z "$TEMPLATE" ]]; then
     echo -e "${YELLOW}No suitable template found. Downloading Ubuntu 24.04...${NC}"
