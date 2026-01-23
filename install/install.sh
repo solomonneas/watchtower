@@ -53,7 +53,19 @@ if [[ "$OS" == "debian" ]] || [[ "$OS" == "ubuntu" ]]; then
         nginx \
         curl \
         git \
-        ca-certificates
+        ca-certificates \
+        openssh-server
+
+    # Enable SSH password authentication (Ubuntu 24.04 disables by default)
+    echo -e "${GREEN}Configuring SSH...${NC}"
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    # Ubuntu 24.04 uses a drop-in that overrides - disable it
+    if [[ -f /etc/ssh/sshd_config.d/60-cloudimg-settings.conf ]]; then
+        sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
+    fi
+    systemctl enable ssh
+    systemctl restart ssh
 
     # Install Node.js 20
     if ! command -v node &> /dev/null; then
