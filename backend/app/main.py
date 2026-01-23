@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .cache import redis_cache
-from .config import settings
+from .config import settings, get_config
+from .polling import scheduler
 from .routers import alerts_router, devices_router, topology_router
 from .routers.diagnostics import router as diagnostics_router
 from .websocket import websocket_endpoint, ws_manager
@@ -17,9 +18,16 @@ async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown events."""
     # Startup
     await redis_cache.connect()
-    # TODO: Start APScheduler for polling when implementing real data sources
+
+    # Start polling scheduler if LibreNMS is configured
+    config = get_config()
+    if config.data_sources.librenms.url:
+        scheduler.start()
+
     yield
+
     # Shutdown
+    await scheduler.stop()
     await redis_cache.disconnect()
 
 

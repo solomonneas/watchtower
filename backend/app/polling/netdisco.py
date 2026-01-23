@@ -65,25 +65,45 @@ class NetdiscoClient:
     """
     Async client for Netdisco API v1
 
+    Supports both Basic Auth (username/password) and Bearer token (api_key).
+    Basic Auth is preferred if username/password are provided.
+
     Usage:
         async with NetdiscoClient() as client:
             devices = await client.get_devices()
             neighbors = await client.get_neighbors("10.1.1.1")
     """
 
-    def __init__(self, base_url: str | None = None, api_key: str | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+    ):
         settings = get_settings()
         self.base_url = (base_url or settings.netdisco_url).rstrip('/')
         self.api_key = api_key or settings.netdisco_api_key
+        self.username = username or settings.netdisco_username
+        self.password = password or settings.netdisco_password
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "NetdiscoClient":
-        self._client = httpx.AsyncClient(
-            base_url=f"{self.base_url}/api/v1",
-            headers={
+        # Prefer Basic Auth if username/password provided
+        if self.username and self.password:
+            auth = httpx.BasicAuth(self.username, self.password)
+            headers = {"Accept": "application/json"}
+        else:
+            auth = None
+            headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Accept": "application/json",
-            },
+            }
+
+        self._client = httpx.AsyncClient(
+            base_url=f"{self.base_url}/api/v1",
+            headers=headers,
+            auth=auth,
             timeout=30.0,
             verify=True,
         )

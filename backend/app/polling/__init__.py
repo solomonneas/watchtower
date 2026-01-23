@@ -1,5 +1,8 @@
 """Polling clients for external data sources."""
 
+from app.polling.scheduler import scheduler, poll_device_status, poll_alerts
+from app.polling.aggregator import get_aggregated_topology, get_device_with_live_data
+
 from app.polling.librenms import (
     LibreNMSClient,
     LibreNMSDevice,
@@ -21,6 +24,12 @@ from app.polling.netdisco import (
 )
 
 __all__ = [
+    # Scheduler
+    "scheduler",
+    "poll_device_status",
+    "poll_alerts",
+    "get_aggregated_topology",
+    "get_device_with_live_data",
     # LibreNMS
     "LibreNMSClient",
     "LibreNMSDevice",

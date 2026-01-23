@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter, HTTPException
 
-from ..mock_data import generate_mock_topology
 from ..models.device import Device, DeviceSummary
+from ..polling import get_aggregated_topology, get_device_with_live_data
 
 router = APIRouter()
 
@@ -11,7 +11,7 @@ router = APIRouter()
 @router.get("/devices", response_model=list[DeviceSummary])
 async def list_devices():
     """List all devices with summary info."""
-    topology = generate_mock_topology()
+    topology = await get_aggregated_topology()
     return [
         DeviceSummary(
             id=device.id,
@@ -27,21 +27,20 @@ async def list_devices():
 @router.get("/device/{device_id}", response_model=Device)
 async def get_device(device_id: str):
     """Get detailed information about a specific device."""
-    topology = generate_mock_topology()
+    device = await get_device_with_live_data(device_id)
 
-    if device_id not in topology.devices:
+    if not device:
         raise HTTPException(status_code=404, detail=f"Device '{device_id}' not found")
 
-    return topology.devices[device_id]
+    return device
 
 
 @router.get("/device/{device_id}/interfaces")
 async def get_device_interfaces(device_id: str):
     """Get interface details for a device."""
-    topology = generate_mock_topology()
+    device = await get_device_with_live_data(device_id)
 
-    if device_id not in topology.devices:
+    if not device:
         raise HTTPException(status_code=404, detail=f"Device '{device_id}' not found")
 
-    device = topology.devices[device_id]
     return {"device_id": device_id, "interfaces": device.interfaces}

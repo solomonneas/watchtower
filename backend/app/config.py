@@ -25,6 +25,8 @@ class LibreNMSConfig(BaseModel):
 class NetdiscoConfig(BaseModel):
     url: str = ""
     api_key: str = ""
+    username: str = ""
+    password: str = ""
 
 
 class ProxmoxConfig(BaseModel):
@@ -162,6 +164,14 @@ class IntegrationSettings:
     @property
     def netdisco_api_key(self) -> str:
         return self._config.data_sources.netdisco.api_key
+
+    @property
+    def netdisco_username(self) -> str:
+        return self._config.data_sources.netdisco.username
+
+    @property
+    def netdisco_password(self) -> str:
+        return self._config.data_sources.netdisco.password
 
     @property
     def proxmox_url(self) -> str:

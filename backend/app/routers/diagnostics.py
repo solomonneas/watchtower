@@ -4,8 +4,10 @@ import logging
 
 from fastapi import APIRouter
 
+from app.cache import redis_cache
 from app.polling.librenms import LibreNMSClient
 from app.polling.netdisco import NetdiscoClient
+from app.polling.scheduler import scheduler, poll_device_status, poll_alerts, CACHE_DEVICES, CACHE_DEVICE_STATUS, CACHE_ALERTS, CACHE_LAST_POLL
 from app.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -115,4 +117,59 @@ async def test_all_sources():
     return {
         "summary": f"{connected}/{configured} sources connected",
         "sources": results,
+    }
+
+
+@router.get("/scheduler")
+async def get_scheduler_status():
+    """Get polling scheduler status."""
+    last_poll = await redis_cache.get_json(CACHE_LAST_POLL)
+    config = get_config()
+
+    return {
+        "running": scheduler._scheduler is not None and scheduler._scheduler.running if scheduler._scheduler else False,
+        "intervals": {
+            "device_status": config.polling.device_status,
+            "interfaces": config.polling.interfaces,
+            "topology": config.polling.topology,
+        },
+        "last_poll": last_poll,
+    }
+
+
+@router.post("/poll/now")
+async def trigger_poll():
+    """Trigger an immediate poll of all sources."""
+    await scheduler.poll_now()
+    return {"status": "ok", "message": "Poll triggered"}
+
+
+@router.get("/cache/devices")
+async def get_cached_devices():
+    """View cached device data from last poll."""
+    devices = await redis_cache.get_json(CACHE_DEVICES)
+    status = await redis_cache.get_json(CACHE_DEVICE_STATUS)
+    last_poll = await redis_cache.get_json(CACHE_LAST_POLL)
+
+    if not devices:
+        return {"status": "empty", "message": "No cached device data. Run /api/diagnostics/poll/now to trigger a poll."}
+
+    return {
+        "last_poll": last_poll,
+        "device_count": len(devices) if devices else 0,
+        "devices": devices,
+    }
+
+
+@router.get("/cache/alerts")
+async def get_cached_alerts():
+    """View cached alerts from last poll."""
+    alerts = await redis_cache.get_json(CACHE_ALERTS)
+
+    if alerts is None:
+        return {"status": "empty", "message": "No cached alert data."}
+
+    return {
+        "alert_count": len(alerts),
+        "alerts": alerts,
     }
