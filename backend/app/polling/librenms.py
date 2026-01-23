@@ -58,6 +58,18 @@ class LibreNMSAlert(BaseModel):
     hostname: str | None = None
 
 
+class LibreNMSLink(BaseModel):
+    """CDP/LLDP neighbor link from LibreNMS API"""
+    id: int | None = None
+    local_device_id: int
+    local_port_id: int | None = None
+    local_port: str | None = None  # Local interface name
+    remote_hostname: str | None = None
+    remote_port: str | None = None  # Remote interface name
+    remote_device_id: int | None = None
+    protocol: str | None = None  # cdp, lldp, etc.
+
+
 class LibreNMSClient:
     """
     Async client for LibreNMS API v0
@@ -164,6 +176,30 @@ class LibreNMSClient:
         return await self.get_alerts(state="alert")
 
     # ─────────────────────────────────────────────────────────────
+    # Link/Neighbor endpoints (CDP/LLDP discovery)
+    # ─────────────────────────────────────────────────────────────
+
+    async def get_links(self, device_id: int | str | None = None) -> list[LibreNMSLink]:
+        """
+        Get CDP/LLDP neighbor links.
+
+        Args:
+            device_id: Optional device ID to filter links for a specific device
+
+        Returns:
+            List of discovered neighbor links
+        """
+        if device_id:
+            data = await self._get(f"/devices/{device_id}/links")
+        else:
+            data = await self._get("/resources/links")
+        return [LibreNMSLink(**link) for link in data.get("links", [])]
+
+    async def get_all_links(self) -> list[LibreNMSLink]:
+        """Get all CDP/LLDP links across all devices"""
+        return await self.get_links()
+
+    # ─────────────────────────────────────────────────────────────
     # Health check
     # ─────────────────────────────────────────────────────────────
 
@@ -196,3 +232,9 @@ async def fetch_active_alerts() -> list[LibreNMSAlert]:
     """Fetch active alerts from LibreNMS"""
     async with LibreNMSClient() as client:
         return await client.get_active_alerts()
+
+
+async def fetch_all_links() -> list[LibreNMSLink]:
+    """Fetch all CDP/LLDP links from LibreNMS"""
+    async with LibreNMSClient() as client:
+        return await client.get_all_links()

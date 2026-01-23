@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from app.polling.librenms import LibreNMSClient, LibreNMSDevice
+from app.polling.librenms import LibreNMSClient, LibreNMSDevice, LibreNMSLink
 from app.config import get_config, get_topology_config, Settings
 
 
@@ -257,9 +257,149 @@ async def preview_discovery(
     }
 
 
+async def discover_connections(
+    discovered_devices: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Discover connections between devices using LibreNMS CDP/LLDP data.
+
+    Args:
+        discovered_devices: List of discovered devices with their LibreNMS info
+
+    Returns:
+        List of connection dicts ready for topology.yaml
+    """
+    # Build lookup maps for device matching
+    librenms_id_to_device = {}
+    hostname_to_device = {}
+    ip_to_device = {}
+
+    for device in discovered_devices:
+        librenms_id_to_device[device["librenms_id"]] = device
+        hostname_to_device[device["librenms_hostname"].lower()] = device
+        if device.get("ip"):
+            ip_to_device[device["ip"]] = device
+
+    # Fetch all links from LibreNMS
+    async with LibreNMSClient() as client:
+        all_links = await client.get_all_links()
+
+    connections = []
+    seen_pairs = set()  # Avoid duplicate connections (A->B and B->A)
+
+    for link in all_links:
+        # Find source device
+        source_device = librenms_id_to_device.get(link.local_device_id)
+        if not source_device:
+            continue
+
+        # Find target device by remote_device_id or remote_hostname
+        target_device = None
+        if link.remote_device_id:
+            target_device = librenms_id_to_device.get(link.remote_device_id)
+
+        if not target_device and link.remote_hostname:
+            # Try exact match, then lowercase match
+            remote_host_lower = link.remote_hostname.lower()
+            target_device = hostname_to_device.get(remote_host_lower)
+
+            # Try stripping domain
+            if not target_device and "." in remote_host_lower:
+                short_name = remote_host_lower.split(".")[0]
+                for hostname, dev in hostname_to_device.items():
+                    if hostname.split(".")[0] == short_name:
+                        target_device = dev
+                        break
+
+        if not target_device:
+            continue  # Remote device not in our discovered set
+
+        # Create normalized pair key to avoid duplicates
+        pair_key = tuple(sorted([source_device["id"], target_device["id"]]))
+        if pair_key in seen_pairs:
+            continue
+        seen_pairs.add(pair_key)
+
+        # Generate connection ID
+        conn_id = f"{source_device['id']}-to-{target_device['id']}"
+
+        # Build connection entry
+        connection = {
+            "id": conn_id,
+            "source": {
+                "device": source_device["id"],
+                "port": link.local_port or "unknown",
+            },
+            "target": {
+                "device": target_device["id"],
+                "port": link.remote_port or "unknown",
+            },
+            "auto_discovered": True,  # Mark as auto-discovered
+        }
+
+        # Add protocol info if available
+        if link.protocol:
+            connection["discovery_protocol"] = link.protocol
+
+        connections.append(connection)
+
+    return connections
+
+
+def _merge_connections(
+    discovered: list[dict[str, Any]],
+    existing: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """
+    Merge discovered connections with existing manual connections.
+
+    - Auto-discovered connections (auto_discovered: true) are replaced
+    - Manual connections (no auto_discovered flag) are preserved
+    """
+    if not existing:
+        return discovered
+
+    # Keep manual connections (those without auto_discovered flag)
+    manual_connections = [
+        conn for conn in existing
+        if not conn.get("auto_discovered", False)
+    ]
+
+    # Build set of discovered connection IDs for reference
+    discovered_ids = {conn["id"] for conn in discovered}
+
+    # Also keep manual connections that don't conflict with discovered ones
+    final_manual = []
+    for conn in manual_connections:
+        # Check if this manual connection conflicts with a discovered one
+        # by comparing device pairs
+        source_dev = conn.get("source", {}).get("device")
+        target_dev = conn.get("target", {}).get("device")
+        if source_dev and target_dev:
+            pair = tuple(sorted([source_dev, target_dev]))
+            # Check if discovered connections have this pair
+            conflict = False
+            for disc_conn in discovered:
+                disc_source = disc_conn.get("source", {}).get("device")
+                disc_target = disc_conn.get("target", {}).get("device")
+                if disc_source and disc_target:
+                    disc_pair = tuple(sorted([disc_source, disc_target]))
+                    if pair == disc_pair:
+                        conflict = True
+                        break
+            if not conflict:
+                final_manual.append(conn)
+        else:
+            # Keep connections without proper device refs (shouldn't happen)
+            final_manual.append(conn)
+
+    return discovered + final_manual
+
+
 def _build_topology_yaml(
     devices: list[dict[str, Any]],
     existing_topology: dict[str, Any] | None = None,
+    connections: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Build topology.yaml structure from discovered devices.
@@ -303,12 +443,16 @@ def _build_topology_yaml(
         "devices": devices_section,
     }
 
-    # Preserve connections and external_links from existing topology
-    if existing_topology:
-        if "connections" in existing_topology:
-            topology["connections"] = existing_topology["connections"]
-        if "external_links" in existing_topology:
-            topology["external_links"] = existing_topology["external_links"]
+    # Handle connections: use provided connections or preserve existing
+    if connections is not None:
+        existing_connections = existing_topology.get("connections", []) if existing_topology else []
+        topology["connections"] = _merge_connections(connections, existing_connections)
+    elif existing_topology and "connections" in existing_topology:
+        topology["connections"] = existing_topology["connections"]
+
+    # Always preserve external_links from existing topology
+    if existing_topology and "external_links" in existing_topology:
+        topology["external_links"] = existing_topology["external_links"]
 
     return topology
 
@@ -317,6 +461,7 @@ async def generate_topology_yaml(
     vm_subnets: list[str] | None = None,
     include_types: list[str] | None = None,
     preserve_existing: bool = True,
+    auto_discover_connections: bool = True,
 ) -> str:
     """
     Generate topology.yaml content from discovered devices.
@@ -325,14 +470,20 @@ async def generate_topology_yaml(
         vm_subnets: Subnets to exclude
         include_types: Device types to include
         preserve_existing: Whether to preserve connections/external_links from existing topology
+        auto_discover_connections: Whether to discover connections from LibreNMS CDP/LLDP data
 
     Returns:
         YAML string ready to write to file
     """
     result = await discover_physical_devices(vm_subnets, include_types)
 
+    # Discover connections if enabled
+    connections = None
+    if auto_discover_connections and result["devices"]:
+        connections = await discover_connections(result["devices"])
+
     existing = get_topology_config() if preserve_existing else None
-    topology = _build_topology_yaml(result["devices"], existing)
+    topology = _build_topology_yaml(result["devices"], existing, connections)
 
     # Generate YAML with nice formatting
     yaml_content = "# Watchtower Topology Configuration\n"
@@ -347,6 +498,7 @@ async def sync_to_topology(
     include_types: list[str] | None = None,
     output_path: str | None = None,
     backup: bool = True,
+    discover_links: bool = True,
 ) -> dict[str, Any]:
     """
     Sync discovered devices to topology.yaml file.
@@ -356,6 +508,7 @@ async def sync_to_topology(
         include_types: Device types to include
         output_path: Path to write topology.yaml (defaults to config path)
         backup: Whether to create backup of existing file
+        discover_links: Whether to auto-discover connections from CDP/LLDP
 
     Returns:
         Dict with sync results and file path
@@ -370,20 +523,29 @@ async def sync_to_topology(
         backup_path = topology_path.with_suffix(".yaml.bak")
         backup_path.write_text(topology_path.read_text())
 
+    # Discover devices first to get connection count
+    result = await discover_physical_devices(vm_subnets, include_types)
+
+    # Discover connections if enabled
+    connections_discovered = 0
+    if discover_links and result["devices"]:
+        connections = await discover_connections(result["devices"])
+        connections_discovered = len(connections)
+
     # Generate new topology
     yaml_content = await generate_topology_yaml(
-        vm_subnets, include_types, preserve_existing=True
+        vm_subnets, include_types, preserve_existing=True, auto_discover_connections=discover_links
     )
 
     # Write to file
     topology_path.write_text(yaml_content)
 
-    # Get discovery summary for return
-    result = await discover_physical_devices(vm_subnets, include_types)
-
     return {
         "success": True,
         "file_path": str(topology_path),
         "backup_created": backup and topology_path.with_suffix(".yaml.bak").exists(),
-        "summary": result["summary"],
+        "summary": {
+            **result["summary"],
+            "connections_discovered": connections_discovered,
+        },
     }

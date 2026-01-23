@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.config import get_config
 from app.discovery import (
+    discover_connections,
     discover_physical_devices,
     preview_discovery,
     sync_to_topology,
@@ -74,6 +75,10 @@ async def sync_from_librenms(
         bool,
         Query(description="Create backup of existing topology.yaml"),
     ] = True,
+    discover_links: Annotated[
+        bool,
+        Query(description="Auto-discover connections from LibreNMS CDP/LLDP data"),
+    ] = True,
 ):
     """
     Sync physical devices from LibreNMS to topology.yaml.
@@ -83,15 +88,16 @@ async def sync_from_librenms(
     2. Filter out VMs (devices in vm_subnets)
     3. Include only specified device types
     4. Generate clusters and devices sections
-    5. Preserve existing connections and external_links
-    6. Write to topology.yaml (with optional backup)
+    5. Auto-discover connections from CDP/LLDP (if enabled)
+    6. Preserve manual connections and external_links
+    7. Write to topology.yaml (with optional backup)
 
-    Returns sync summary including device counts.
+    Returns sync summary including device and connection counts.
     """
     subnets = vm_subnets.split(",") if vm_subnets else None
     types = include_types.split(",") if include_types else None
 
-    return await sync_to_topology(subnets, types, backup=backup)
+    return await sync_to_topology(subnets, types, backup=backup, discover_links=discover_links)
 
 
 @router.get("/devices")
@@ -118,6 +124,47 @@ async def list_discovered_devices(
     types = include_types.split(",") if include_types else None
 
     return await discover_physical_devices(subnets, types)
+
+
+@router.get("/connections")
+async def preview_connections(
+    vm_subnets: Annotated[
+        str | None,
+        Query(description="Comma-separated subnets to exclude"),
+    ] = None,
+    include_types: Annotated[
+        str | None,
+        Query(description="Comma-separated device types to include"),
+    ] = None,
+):
+    """
+    Preview connections that would be discovered from LibreNMS CDP/LLDP data.
+
+    Returns a list of connections with source/target device and port info.
+    Does not modify topology.yaml.
+    """
+    subnets = vm_subnets.split(",") if vm_subnets else None
+    types = include_types.split(",") if include_types else None
+
+    # First discover devices
+    result = await discover_physical_devices(subnets, types)
+
+    if not result["devices"]:
+        return {
+            "connections": [],
+            "summary": {"total": 0, "note": "No devices discovered to find connections for"},
+        }
+
+    # Then discover connections between them
+    connections = await discover_connections(result["devices"])
+
+    return {
+        "connections": connections,
+        "summary": {
+            "total": len(connections),
+            "devices_checked": len(result["devices"]),
+        },
+    }
 
 
 @router.get("/filters")
