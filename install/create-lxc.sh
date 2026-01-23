@@ -199,7 +199,7 @@ pct create $CTID $TEMPLATE \
 echo -e "${GREEN}Starting container...${NC}"
 pct start $CTID
 
-# Wait for network
+# Wait for network (IP)
 echo -e "${GREEN}Waiting for network...${NC}"
 for i in {1..30}; do
     IP=$(pct exec $CTID -- hostname -I 2>/dev/null | awk '{print $1}')
@@ -216,9 +216,31 @@ fi
 
 echo -e "${GREEN}Container IP: $IP${NC}"
 
+# Wait for DNS to be ready
+echo -e "${GREEN}Waiting for DNS...${NC}"
+for i in {1..30}; do
+    if pct exec $CTID -- ping -c1 github.com &>/dev/null; then
+        echo -e "${GREEN}DNS is ready${NC}"
+        break
+    fi
+    sleep 2
+done
+
+# Update package lists first
+echo -e "\n${GREEN}Updating package lists...${NC}"
+pct exec $CTID -- apt-get update
+
+# Install curl if not present
+echo -e "${GREEN}Ensuring curl is installed...${NC}"
+pct exec $CTID -- apt-get install -y curl
+
 # Run installer
 echo -e "\n${GREEN}Running Watchtower installer...${NC}"
-pct exec $CTID -- bash -c "curl -fsSL https://raw.githubusercontent.com/solomonneas/watchtower/main/install/install.sh | bash"
+if ! pct exec $CTID -- bash -c "curl -fsSL https://raw.githubusercontent.com/solomonneas/watchtower/main/install/install.sh | bash"; then
+    echo -e "${RED}Installer failed! Enter container to debug:${NC}"
+    echo "  pct enter $CTID"
+    exit 1
+fi
 
 echo -e "\n${CYAN}╔═══════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║              Setup Complete!              ║${NC}"
