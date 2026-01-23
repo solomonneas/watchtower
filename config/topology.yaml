@@ -1,0 +1,208 @@
+# Watchtower Topology Configuration
+# Define your network clusters, devices, and connections here
+
+# Cluster Definitions - Groups of related devices
+clusters:
+  - id: firewalls
+    name: Palo Alto Firewalls
+    type: firewall
+    icon: shield
+    position: { x: 400, y: 50 }
+    devices:
+      - pa-1
+      - pa-2
+
+  - id: switches
+    name: Catalyst Stack
+    type: switch
+    icon: switch
+    position: { x: 400, y: 250 }
+    devices:
+      - cat-1
+      - cat-2
+      - cat-3
+      - cat-4
+
+  - id: proxmox
+    name: Proxmox Cluster
+    type: server
+    icon: server
+    position: { x: 200, y: 450 }
+    devices:
+      - pve-1
+      - pve-2
+      - pve-3
+      - pve-4
+      - pve-5
+      - pve-6
+
+  - id: dell-servers
+    name: Dell Servers
+    type: server
+    icon: server
+    position: { x: 600, y: 450 }
+    devices:
+      - dell-1
+      - dell-2
+      - dell-3
+      - dell-4
+      - dell-5
+      - dell-6
+
+# Device Metadata
+devices:
+  pa-1:
+    display_name: PA-220 Primary
+    model: Palo Alto PA-220
+    ip: 10.1.1.1
+    location: Lakeland IT Closet
+    role: primary
+
+  pa-2:
+    display_name: PA-220 Secondary
+    model: Palo Alto PA-220
+    ip: 10.1.1.2
+    location: Lakeland IT Closet
+    role: secondary
+
+  cat-1:
+    display_name: Catalyst 3850-1
+    model: Cisco Catalyst 3850-48P
+    ip: 10.1.1.10
+    location: Lakeland MDF
+    port_count: 48
+
+  cat-2:
+    display_name: Catalyst 3850-2
+    model: Cisco Catalyst 3850-48P
+    ip: 10.1.1.11
+    location: Lakeland MDF
+    port_count: 48
+
+  cat-3:
+    display_name: Catalyst 3850-3
+    model: Cisco Catalyst 3850-48P
+    ip: 10.1.1.12
+    location: Lakeland IDF-1
+    port_count: 48
+
+  cat-4:
+    display_name: Catalyst 3850-4
+    model: Cisco Catalyst 3850-48P
+    ip: 10.1.1.13
+    location: Lakeland IDF-2
+    port_count: 48
+
+  pve-1:
+    display_name: Proxmox Node 1
+    model: Lenovo SR650
+    ip: 10.1.2.1
+    location: Server Rack A
+
+  pve-2:
+    display_name: Proxmox Node 2
+    model: Lenovo SR650
+    ip: 10.1.2.2
+    location: Server Rack A
+
+  pve-3:
+    display_name: Proxmox Node 3
+    model: Lenovo SR650
+    ip: 10.1.2.3
+    location: Server Rack A
+
+  pve-4:
+    display_name: Proxmox Node 4
+    model: Lenovo SR650
+    ip: 10.1.2.4
+    location: Server Rack B
+
+  pve-5:
+    display_name: Proxmox Node 5
+    model: Lenovo SR650
+    ip: 10.1.2.5
+    location: Server Rack B
+
+  pve-6:
+    display_name: Proxmox Node 6
+    model: Lenovo SR650
+    ip: 10.1.2.6
+    location: Server Rack B
+
+  dell-1:
+    display_name: Dell Server 1
+    model: Dell PowerEdge R740
+    ip: 10.1.3.1
+    location: Server Rack C
+
+  dell-2:
+    display_name: Dell Server 2
+    model: Dell PowerEdge R740
+    ip: 10.1.3.2
+    location: Server Rack C
+
+  dell-3:
+    display_name: Dell Server 3
+    model: Dell PowerEdge R740
+    ip: 10.1.3.3
+    location: Server Rack C
+
+  dell-4:
+    display_name: Dell Server 4
+    model: Dell PowerEdge R740
+    ip: 10.1.3.4
+    location: Server Rack D
+
+  dell-5:
+    display_name: Dell Server 5
+    model: Dell PowerEdge R740
+    ip: 10.1.3.5
+    location: Server Rack D
+
+  dell-6:
+    display_name: Dell Server 6
+    model: Dell PowerEdge R740
+    ip: 10.1.3.6
+    location: Server Rack D
+
+# Connections between devices
+connections:
+  - id: pa1-to-cat1
+    source: { device: pa-1, port: eth1/1 }
+    target: { device: cat-1, port: Gi1/0/48 }
+    type: trunk
+    speed: 10000
+
+  - id: pa2-to-cat1
+    source: { device: pa-2, port: eth1/1 }
+    target: { device: cat-1, port: Gi1/0/47 }
+    type: trunk
+    speed: 10000
+
+# External Links (WAN, upstream)
+external_links:
+  - id: wan-lakeland-winterhaven
+    source: { device: pa-1, port: eth1/2 }
+    target:
+      label: Winter Haven Campus
+      type: campus
+      icon: building
+    provider: Spectrum
+    circuit_id: SPE-123456
+    speed: 1000
+
+  - id: wan-winterhaven-flr
+    source: { label: Winter Haven Campus }
+    target:
+      label: Florida LambdaRail
+      type: ix
+      icon: globe
+    provider: FLR
+    speed: 10000
+
+  - id: flr-to-internet
+    source: { label: Florida LambdaRail }
+    target:
+      label: Internet
+      type: cloud
+      icon: cloud

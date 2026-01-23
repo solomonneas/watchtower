@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# AI planning files
+CLAUDE.md
+.claude/
+GEMINI.md
+.gemini/
+CODEX.md
+.codex/
+COPILOT.md
+.copilot/
+plan.md
+*.plan.md
+blueprint.md
+
+# Local config (contains secrets)
+config/config.yaml
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
