@@ -210,18 +210,28 @@ export default function SpeedtestWidget() {
             Last test: {timeAgo(result.timestamp)}
           </div>
 
-          {/* Run test button */}
-          <button
-            onClick={triggerTest}
-            disabled={cooldown > 0}
-            className={`w-full py-2 text-sm rounded-lg transition-colors ${
-              cooldown > 0
-                ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                : 'bg-bg-tertiary hover:bg-bg-secondary text-text-primary'
-            }`}
-          >
-            {cooldown > 0 ? `Wait ${cooldown}s` : 'Run Test'}
-          </button>
+          {/* Run test & Export buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={triggerTest}
+              disabled={cooldown > 0}
+              className={`flex-1 py-2 text-sm rounded-lg transition-colors ${
+                cooldown > 0
+                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                  : 'bg-bg-tertiary hover:bg-bg-secondary text-text-primary'
+              }`}
+            >
+              {cooldown > 0 ? `Wait ${cooldown}s` : 'Run Test'}
+            </button>
+            <a
+              href="/api/speedtest/export"
+              download
+              className="px-3 py-2 text-sm bg-bg-tertiary hover:bg-bg-secondary text-text-primary rounded-lg transition-colors flex items-center"
+              title="Export CSV"
+            >
+              <ExportIcon />
+            </a>
+          </div>
 
           {/* Error display */}
           {error && (
@@ -270,6 +280,14 @@ function UpArrow() {
   return (
     <svg className="w-4 h-4 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+    </svg>
+  )
+}
+
+function ExportIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
     </svg>
   )
 }

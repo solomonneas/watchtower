@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from app.cache import redis_cache
 from app.config import get_config
@@ -109,3 +111,34 @@ async def _run_and_broadcast() -> None:
         "timestamp": datetime.utcnow().isoformat(),
         "result": result.to_dict(),
     })
+
+
+@router.get("/export")
+async def export_csv() -> FileResponse:
+    """
+    Download the speedtest CSV history file.
+
+    Returns the CSV file as a download if it exists.
+    """
+    config = get_config()
+    speedtest_config = config.speedtest
+
+    if not speedtest_config or not speedtest_config.logging.enabled:
+        raise HTTPException(
+            status_code=404,
+            detail="CSV logging is not enabled",
+        )
+
+    csv_path = Path(speedtest_config.logging.path)
+
+    if not csv_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No speedtest history available yet",
+        )
+
+    return FileResponse(
+        path=csv_path,
+        filename="speedtest_history.csv",
+        media_type="text/csv",
+    )
