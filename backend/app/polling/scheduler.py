@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 CACHE_DEVICES = "watchtower:devices"
 CACHE_DEVICE_STATUS = "watchtower:device_status"
 CACHE_ALERTS = "watchtower:alerts"
+CACHE_HEALTH = "watchtower:health"
 CACHE_LAST_POLL = "watchtower:last_poll"
 
 
@@ -57,6 +58,15 @@ class PollingScheduler:
             IntervalTrigger(seconds=polling.interfaces),
             id="poll_interfaces",
             name="Poll interface statistics",
+            replace_existing=True,
+        )
+
+        # Health polling (CPU, memory) - same interval as interfaces
+        self._scheduler.add_job(
+            poll_health,
+            IntervalTrigger(seconds=polling.interfaces),
+            id="poll_health",
+            name="Poll CPU/memory health",
             replace_existing=True,
         )
 
@@ -165,10 +175,7 @@ async def poll_device_status() -> None:
 
 async def poll_interfaces() -> None:
     """
-    Poll interface statistics from LibreNMS.
-
-    This is more expensive (one API call per device with ports),
-    so it runs less frequently.
+    Poll interface statistics from LibreNMS for all devices.
     """
     try:
         # Get cached devices
@@ -177,8 +184,9 @@ async def poll_interfaces() -> None:
             logger.debug("No cached devices, skipping interface poll")
             return
 
+        polled_count = 0
         async with LibreNMSClient() as client:
-            for device in devices_data[:10]:  # Limit to avoid hammering API
+            for device in devices_data:
                 device_id = device.get("device_id")
                 if not device_id:
                     continue
@@ -191,10 +199,14 @@ async def poll_interfaces() -> None:
                             {
                                 "port_id": p.port_id,
                                 "name": p.ifName or p.ifDescr,
+                                "alias": p.ifAlias,
                                 "status": p.ifOperStatus,
+                                "admin_status": p.ifAdminStatus,
                                 "speed": p.ifSpeed,
                                 "in_rate": p.ifInOctets_rate,
                                 "out_rate": p.ifOutOctets_rate,
+                                "in_errors": p.ifInErrors_rate,
+                                "out_errors": p.ifOutErrors_rate,
                             }
                             for p in ports
                         ]
@@ -203,13 +215,52 @@ async def poll_interfaces() -> None:
                             port_data,
                             ttl=300,  # 5 min TTL
                         )
+                        polled_count += 1
                 except Exception as e:
                     logger.debug("Failed to poll interfaces for device %s: %s", device_id, e)
 
-        logger.debug("Polled interfaces for devices")
+        logger.debug("Polled interfaces for %d devices", polled_count)
 
     except Exception as e:
         logger.error("Failed to poll interfaces: %s", e)
+
+
+async def poll_health() -> None:
+    """
+    Poll CPU and memory usage from LibreNMS health sensors.
+    """
+    try:
+        # Get cached devices
+        devices_data = await redis_cache.get_json(CACHE_DEVICES)
+        if not devices_data:
+            logger.debug("No cached devices, skipping health poll")
+            return
+
+        health_data: dict[str, dict[str, Any]] = {}
+
+        async with LibreNMSClient() as client:
+            for device in devices_data:
+                device_id = device.get("device_id")
+                if not device_id:
+                    continue
+
+                try:
+                    cpu = await client.get_device_processor(device_id)
+                    memory = await client.get_device_memory(device_id)
+
+                    health_data[str(device_id)] = {
+                        "cpu": cpu,
+                        "memory": memory,
+                    }
+                except Exception as e:
+                    logger.debug("Failed to poll health for device %s: %s", device_id, e)
+
+        # Cache all health data in one key
+        await redis_cache.set(CACHE_HEALTH, health_data, ttl=300)
+        logger.debug("Polled health for %d devices", len(health_data))
+
+    except Exception as e:
+        logger.error("Failed to poll health: %s", e)
 
 
 async def poll_alerts() -> None:

@@ -70,6 +70,17 @@ class LibreNMSLink(BaseModel):
     protocol: str | None = None  # cdp, lldp, etc.
 
 
+class LibreNMSHealthSensor(BaseModel):
+    """Health sensor data from LibreNMS API (processor, memory, storage)"""
+    sensor_id: int
+    sensor_class: str  # processor, memory, storage, temperature, etc.
+    sensor_type: str | None = None
+    sensor_descr: str | None = None
+    sensor_current: float | None = None  # Current value (e.g., % usage)
+    sensor_limit: float | None = None
+    sensor_limit_low: float | None = None
+
+
 class LibreNMSClient:
     """
     Async client for LibreNMS API v0
@@ -198,6 +209,50 @@ class LibreNMSClient:
     async def get_all_links(self) -> list[LibreNMSLink]:
         """Get all CDP/LLDP links across all devices"""
         return await self.get_links()
+
+    # ─────────────────────────────────────────────────────────────
+    # Health/Sensor endpoints (CPU, memory, temperature)
+    # ─────────────────────────────────────────────────────────────
+
+    async def get_device_health(
+        self, device_id: int | str, sensor_class: str | None = None
+    ) -> list[LibreNMSHealthSensor]:
+        """
+        Get health sensors for a device.
+
+        Args:
+            device_id: Device ID or hostname
+            sensor_class: Filter by class (processor, memory, storage, temperature)
+
+        Returns:
+            List of health sensors with current values
+        """
+        try:
+            if sensor_class:
+                data = await self._get(f"/devices/{device_id}/health/{sensor_class}")
+            else:
+                data = await self._get(f"/devices/{device_id}/health")
+            return [LibreNMSHealthSensor(**s) for s in data.get("data", [])]
+        except httpx.HTTPStatusError:
+            return []
+
+    async def get_device_processor(self, device_id: int | str) -> float | None:
+        """Get average CPU usage for a device (returns percentage)."""
+        sensors = await self.get_device_health(device_id, "processor")
+        if not sensors:
+            return None
+        # Average all processor sensors
+        values = [s.sensor_current for s in sensors if s.sensor_current is not None]
+        return sum(values) / len(values) if values else None
+
+    async def get_device_memory(self, device_id: int | str) -> float | None:
+        """Get memory usage for a device (returns percentage)."""
+        sensors = await self.get_device_health(device_id, "memory")
+        if not sensors:
+            return None
+        # Usually just one memory sensor, take the first or average
+        values = [s.sensor_current for s in sensors if s.sensor_current is not None]
+        return values[0] if values else None
 
     # ─────────────────────────────────────────────────────────────
     # Health check

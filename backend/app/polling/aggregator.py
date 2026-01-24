@@ -16,7 +16,8 @@ from app.config import get_topology_config
 from app.models.device import Device, DeviceStatus, DeviceType, DeviceStats
 from app.models.topology import Topology, Cluster, Position
 from app.models.connection import Connection, ExternalLink, ConnectionEndpoint, ExternalTarget, ConnectionType, ConnectionStatus
-from app.polling.scheduler import CACHE_DEVICES, CACHE_ALERTS
+from app.models.device import Interface
+from app.polling.scheduler import CACHE_DEVICES, CACHE_ALERTS, CACHE_HEALTH
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ async def get_aggregated_topology() -> Topology:
     # Load cached LibreNMS data
     librenms_devices = await redis_cache.get_json(CACHE_DEVICES) or []
     librenms_alerts = await redis_cache.get_json(CACHE_ALERTS) or []
+    health_data = await redis_cache.get_json(CACHE_HEALTH) or {}
 
     # Build lookup indexes
     by_ip, by_hostname = build_librenms_indexes(librenms_devices)
@@ -154,18 +156,30 @@ async def get_aggregated_topology() -> Topology:
         # Find matching LibreNMS device
         librenms_data = match_librenms_device(device_id, config, by_ip, by_hostname)
 
-        # Determine status
+        # Determine status and gather live data
         if librenms_data:
             status = librenms_status_to_device_status(librenms_data.get("status"))
             uptime = librenms_data.get("uptime", 0)
             last_polled = librenms_data.get("last_polled")
             librenms_device_id = librenms_data.get("device_id")
             alert_count = alerts_by_device.get(librenms_device_id, 0)
+
+            # Get health data (CPU/memory)
+            device_health = health_data.get(str(librenms_device_id), {})
+            cpu = device_health.get("cpu") or 0.0
+            memory = device_health.get("memory") or 0.0
+
+            # Get cached interfaces
+            interfaces = await _get_device_interfaces(librenms_device_id)
         else:
             status = DeviceStatus.UNKNOWN
             uptime = 0
             last_polled = None
             alert_count = 0
+            cpu = 0.0
+            memory = 0.0
+            interfaces = []
+            librenms_device_id = None
 
         # Build device
         cluster_type = device_cluster_type.get(device_id, "other")
@@ -177,7 +191,8 @@ async def get_aggregated_topology() -> Topology:
             ip=config.get("ip"),
             location=config.get("location"),
             status=status,
-            stats=DeviceStats(uptime=uptime or 0),
+            stats=DeviceStats(uptime=uptime or 0, cpu=cpu, memory=memory),
+            interfaces=interfaces,
             alert_count=alert_count,
             last_seen=datetime.fromisoformat(last_polled) if last_polled else None,
         )
@@ -214,11 +229,37 @@ async def get_aggregated_topology() -> Topology:
             status=cluster_status,
         ))
 
-    # Build connections
+    # Build topology device -> LibreNMS device ID mapping for connection lookups
+    topo_to_librenms: dict[str, int] = {}
+    for topo_device_id, config in device_configs.items():
+        librenms_data = match_librenms_device(topo_device_id, config, by_ip, by_hostname)
+        if librenms_data:
+            topo_to_librenms[topo_device_id] = librenms_data.get("device_id")
+
+    # Build connections with live utilization data
     connections: list[Connection] = []
     for conn_config in topo_config.get("connections", []):
         source_cfg = conn_config.get("source", {})
         target_cfg = conn_config.get("target", {})
+
+        # Get utilization from source port interface
+        utilization = await _get_port_utilization(
+            topo_to_librenms.get(source_cfg.get("device")),
+            source_cfg.get("port"),
+        )
+
+        # Determine connection status based on device status
+        source_device = devices.get(source_cfg.get("device"))
+        target_device = devices.get(target_cfg.get("device"))
+        if source_device and target_device:
+            if source_device.status == DeviceStatus.DOWN or target_device.status == DeviceStatus.DOWN:
+                conn_status = ConnectionStatus.DOWN
+            elif source_device.status == DeviceStatus.UNKNOWN or target_device.status == DeviceStatus.UNKNOWN:
+                conn_status = ConnectionStatus.UNKNOWN
+            else:
+                conn_status = ConnectionStatus.UP
+        else:
+            conn_status = ConnectionStatus.UNKNOWN
 
         connections.append(Connection(
             id=conn_config["id"],
@@ -232,8 +273,8 @@ async def get_aggregated_topology() -> Topology:
             ),
             connection_type=ConnectionType(conn_config.get("type", "trunk")),
             speed=conn_config.get("speed", 1000),
-            status=ConnectionStatus.UP,
-            utilization=0.0,
+            status=conn_status,
+            utilization=utilization,
         ))
 
     # Build external links
@@ -275,6 +316,106 @@ async def get_aggregated_topology() -> Topology:
         devices_down=devices_down,
         active_alerts=active_alerts,
     )
+
+
+async def _get_port_utilization(librenms_device_id: int | None, port_name: str | None) -> float:
+    """
+    Get utilization percentage for a specific port on a device.
+
+    Matches port by name (e.g., "Gi0/1", "eth0", "GigabitEthernet0/0/1").
+    """
+    if not librenms_device_id or not port_name:
+        return 0.0
+
+    cache_key = f"watchtower:interfaces:{librenms_device_id}"
+    cached = await redis_cache.get_json(cache_key)
+
+    if not cached:
+        return 0.0
+
+    # Normalize port name for matching (case-insensitive, handle abbreviations)
+    port_lower = port_name.lower()
+
+    for port in cached:
+        cached_name = (port.get("name") or "").lower()
+        cached_alias = (port.get("alias") or "").lower()
+
+        # Try exact match first
+        if cached_name == port_lower or cached_alias == port_lower:
+            return _calculate_utilization(port)
+
+        # Try partial match (e.g., "Gi0/1" matches "GigabitEthernet0/1")
+        if port_lower in cached_name or cached_name in port_lower:
+            return _calculate_utilization(port)
+
+    return 0.0
+
+
+def _calculate_utilization(port: dict) -> float:
+    """Calculate utilization percentage from port data."""
+    speed = port.get("speed") or 0  # bits per second
+    in_rate = port.get("in_rate") or 0  # bytes per second
+    out_rate = port.get("out_rate") or 0
+
+    if speed <= 0:
+        return 0.0
+
+    # Convert bytes/s to bits/s
+    in_bps = in_rate * 8
+    out_bps = out_rate * 8
+
+    # Utilization is the higher of in/out as percentage of speed
+    return round(max(in_bps, out_bps) / speed * 100, 2)
+
+
+async def _get_device_interfaces(librenms_device_id: int) -> list[Interface]:
+    """
+    Get cached interfaces for a device and convert to Interface models.
+    """
+    cache_key = f"watchtower:interfaces:{librenms_device_id}"
+    cached = await redis_cache.get_json(cache_key)
+
+    if not cached:
+        return []
+
+    interfaces = []
+    for port in cached:
+        # Calculate utilization if we have speed and rates
+        speed = port.get("speed") or 0  # bits per second
+        in_rate = port.get("in_rate") or 0  # bytes per second
+        out_rate = port.get("out_rate") or 0
+
+        # Convert bytes/s to bits/s for utilization calc
+        in_bps = int(in_rate * 8)
+        out_bps = int(out_rate * 8)
+
+        # Utilization is the higher of in/out as percentage of speed
+        if speed > 0:
+            utilization = max(in_bps, out_bps) / speed * 100
+        else:
+            utilization = 0.0
+
+        # Map status string to enum
+        status_str = port.get("status", "").lower()
+        if status_str == "up":
+            if_status = DeviceStatus.UP
+        elif status_str == "down":
+            if_status = DeviceStatus.DOWN
+        else:
+            if_status = DeviceStatus.UNKNOWN
+
+        interfaces.append(Interface(
+            name=port.get("name") or f"port-{port.get('port_id')}",
+            status=if_status,
+            speed=speed // 1_000_000 if speed else 0,  # Convert to Mbps
+            in_bps=in_bps,
+            out_bps=out_bps,
+            utilization=round(utilization, 2),
+            errors_in=int(port.get("in_errors") or 0),
+            errors_out=int(port.get("out_errors") or 0),
+        ))
+
+    return interfaces
 
 
 async def get_device_with_live_data(device_id: str) -> Device | None:
