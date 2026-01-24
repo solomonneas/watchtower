@@ -8,6 +8,10 @@ import { useWebSocket } from './hooks/useWebSocket'
 import { fetchTopology } from './api/endpoints'
 
 // Debug helper - expose store methods to window for testing
+// Usage in browser console:
+//   window.watchtower.setDeviceDown('s0-1305')
+//   window.watchtower.setDeviceUp('s0-1305')
+//   window.watchtower.listDevices()
 if (typeof window !== 'undefined') {
   (window as unknown as { watchtower: unknown }).watchtower = {
     setDeviceDown: (deviceId: string) => {

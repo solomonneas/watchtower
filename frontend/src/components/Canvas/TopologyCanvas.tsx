@@ -536,6 +536,17 @@ function topologyToEdges(
     const targetId = `external-${link.target.label}`
 
     if (sourceId) {
+      // Check if source device is down
+      let externalLinkStatus = link.status ?? 'up'
+      if (sourceDeviceId) {
+        const sourceDevice = topology.devices[sourceDeviceId]
+        if (sourceDevice?.status === 'down') {
+          externalLinkStatus = 'down'
+        } else if (sourceDevice?.status === 'degraded') {
+          externalLinkStatus = 'degraded'
+        }
+      }
+
       edges.push({
         id: `edge-${link.id}`,
         source: sourceId,
@@ -545,7 +556,7 @@ function topologyToEdges(
           sourcePort: link.source?.port,
           speed: link.speed ?? 1000,
           utilization: link.utilization ?? 0,
-          status: link.status ?? 'up',
+          status: externalLinkStatus,
           connectionType: 'wan',
           description: link.description,
         },
