@@ -153,6 +153,15 @@ export function useWebSocket() {
           // Keepalive response
           break
 
+        case 'speedtest_result': {
+          // Dispatch custom event for SpeedtestWidget
+          const speedtestEvent = new CustomEvent('speedtest-update', {
+            detail: message.result,
+          })
+          window.dispatchEvent(speedtestEvent)
+          break
+        }
+
         default:
           console.log('Unknown message type:', message.type, message)
       }

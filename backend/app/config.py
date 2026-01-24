@@ -111,6 +111,31 @@ class DiscoveryConfig(BaseModel):
     sync_interval: int = 3600  # seconds
 
 
+class SpeedtestThresholds(BaseModel):
+    """Thresholds for speedtest status indicators."""
+
+    degraded_download_mbps: int = 100  # Yellow if below this
+    degraded_ping_ms: int = 50  # Yellow if above this
+    down_download_mbps: int = 10  # Red if below this
+
+
+class SpeedtestLogging(BaseModel):
+    """CSV logging configuration for speedtest results."""
+
+    enabled: bool = True
+    path: str = "/mnt/samba/Shared/Instructors files/Solomon Neas/Watchtower/Speedtest/speedtest.csv"
+
+
+class SpeedtestConfig(BaseModel):
+    """Speedtest polling configuration."""
+
+    enabled: bool = False
+    interval_minutes: int = 15
+    server_id: int | None = None  # None = automatic/closest
+    thresholds: SpeedtestThresholds = SpeedtestThresholds()
+    logging: SpeedtestLogging = SpeedtestLogging()
+
+
 class AppConfig(BaseModel):
     auth: AuthConfig = AuthConfig()
     data_sources: DataSourcesConfig = DataSourcesConfig()
@@ -118,6 +143,7 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = NotificationsConfig()
     alert_thresholds: AlertThresholdsConfig = AlertThresholdsConfig()
     discovery: DiscoveryConfig = DiscoveryConfig()
+    speedtest: SpeedtestConfig = SpeedtestConfig()
 
 
 class Settings(BaseSettings):

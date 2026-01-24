@@ -19,6 +19,12 @@ from app.config import get_config, get_settings
 from app.models.device import DeviceStatus
 from app.polling.librenms import LibreNMSClient, LibreNMSDevice
 from app.polling.proxmox import ProxmoxClient
+from app.polling.speedtest import (
+    run_speedtest,
+    log_to_csv,
+    cache_result,
+    CACHE_SPEEDTEST,
+)
 from app.websocket import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -105,6 +111,21 @@ class PollingScheduler:
                 name="Poll Proxmox node and VM stats",
                 replace_existing=True,
             )
+
+        # Speedtest polling (if configured)
+        speedtest_config = getattr(self._config, "speedtest", None)
+        if speedtest_config and getattr(speedtest_config, "enabled", False):
+            interval_minutes = getattr(speedtest_config, "interval_minutes", 15)
+            from datetime import datetime as dt
+            self._scheduler.add_job(
+                poll_speedtest,
+                IntervalTrigger(minutes=interval_minutes),
+                id="poll_speedtest",
+                name="Run internet speedtest",
+                replace_existing=True,
+                next_run_time=dt.now(),  # Run immediately on startup
+            )
+            logger.info("Speedtest polling enabled: every %d minutes", interval_minutes)
 
         self._scheduler.start()
         logger.info(
@@ -462,6 +483,46 @@ async def poll_proxmox() -> None:
         logger.error("Failed to poll Proxmox: %s", e)
 
 
+async def poll_speedtest() -> None:
+    """
+    Run internet speedtest and cache/log results.
+    """
+    try:
+        config = get_config()
+        speedtest_config = getattr(config, "speedtest", None)
+
+        if not speedtest_config:
+            return
+
+        # Get optional server ID from config
+        server_id = getattr(speedtest_config, "server_id", None)
+
+        # Run the speedtest
+        result = await run_speedtest(server_id=server_id)
+
+        # Cache result in Redis
+        await cache_result(result)
+
+        # Log to CSV if configured
+        logging_config = getattr(speedtest_config, "logging", None)
+        if logging_config and getattr(logging_config, "enabled", False):
+            csv_path = getattr(logging_config, "path", None)
+            if csv_path:
+                log_to_csv(result, csv_path)
+
+        # Broadcast to WebSocket clients
+        await broadcast_speedtest_result(result.to_dict())
+
+        logger.debug(
+            "Speedtest poll complete: %.1f Mbps down, status=%s",
+            result.download_mbps,
+            result.status,
+        )
+
+    except Exception as e:
+        logger.error("Failed to poll speedtest: %s", e)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # WebSocket Broadcasts
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,6 +552,15 @@ async def broadcast_resolved_alerts(alert_ids: list[int]) -> None:
         "type": "alerts_resolved",
         "timestamp": datetime.utcnow().isoformat(),
         "alert_ids": alert_ids,
+    })
+
+
+async def broadcast_speedtest_result(result: dict[str, Any]) -> None:
+    """Broadcast speedtest result to WebSocket clients."""
+    await ws_manager.broadcast({
+        "type": "speedtest_result",
+        "timestamp": datetime.utcnow().isoformat(),
+        "result": result,
     })
 
 
