@@ -4,7 +4,12 @@ export type DeviceType = 'switch' | 'firewall' | 'server' | 'router' | 'access_p
 export interface Interface {
   name: string
   status: DeviceStatus
-  speed: number // Mbps
+  admin_status?: string   // "up" or "down" - admin state
+  alias?: string          // Port description
+  is_trunk?: boolean      // True if trunk port
+  poe_enabled?: boolean   // True if PoE powered
+  poe_power?: number      // Watts being delivered
+  speed: number           // Mbps
   in_bps: number
   out_bps: number
   utilization: number

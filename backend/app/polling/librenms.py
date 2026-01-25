@@ -32,8 +32,8 @@ class LibreNMSDevice(BaseModel):
 
 class LibreNMSPort(BaseModel):
     """Port/interface data from LibreNMS API"""
-    port_id: int
-    device_id: int
+    port_id: int | None = None  # Some devices may not have port_id
+    device_id: int | None = None  # Some devices may not have device_id
     ifName: str | None = None
     ifAlias: str | None = None
     ifDescr: str | None = None
@@ -146,10 +146,14 @@ class LibreNMSClient:
 
     async def get_ports(self, device_id: int | str | None = None) -> list[LibreNMSPort]:
         """Get ports, optionally filtered by device"""
+        # Request specific columns - LibreNMS only returns ifName by default
+        columns = "port_id,device_id,ifName,ifAlias,ifDescr,ifSpeed,ifOperStatus,ifAdminStatus,ifInOctets_rate,ifOutOctets_rate,ifInErrors_rate,ifOutErrors_rate"
+        params = {"columns": columns}
+
         if device_id:
-            data = await self._get(f"/devices/{device_id}/ports")
+            data = await self._get(f"/devices/{device_id}/ports", params=params)
         else:
-            data = await self._get("/ports")
+            data = await self._get("/ports", params=params)
         return [LibreNMSPort(**p) for p in data.get("ports", [])]
 
     async def get_port(self, port_id: int) -> LibreNMSPort | None:

@@ -556,7 +556,7 @@ async def _get_device_interfaces(librenms_device_id: int) -> list[Interface]:
             utilization = 0.0
 
         # Map status string to enum
-        status_str = port.get("status", "").lower()
+        status_str = (port.get("status") or "").lower()
         if status_str == "up":
             if_status = DeviceStatus.UP
         elif status_str == "down":
@@ -567,6 +567,8 @@ async def _get_device_interfaces(librenms_device_id: int) -> list[Interface]:
         interfaces.append(Interface(
             name=port.get("name") or f"port-{port.get('port_id')}",
             status=if_status,
+            admin_status=port.get("admin_status"),
+            alias=port.get("alias"),
             speed=speed // 1_000_000 if speed else 0,  # Convert to Mbps
             in_bps=in_bps,
             out_bps=out_bps,

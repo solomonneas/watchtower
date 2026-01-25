@@ -1,6 +1,7 @@
 import type { Device } from '../../types/device'
 import StatusDot from '../common/StatusDot'
 import UtilizationBar from '../common/UtilizationBar'
+import { PortGrid } from './PortGrid'
 import { useNocStore } from '../../store/nocStore'
 
 interface DeviceCardProps {
@@ -113,6 +114,16 @@ export default function DeviceCard({ device }: DeviceCardProps) {
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Port Grid for switches */}
+      {device.device_type === 'switch' && device.interfaces.length > 0 && (
+        <div className="space-y-3 mb-4 pb-4 border-b border-border-default">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+            Port Grid
+          </h3>
+          <PortGrid interfaces={device.interfaces} deviceName={device.model || device.display_name} />
         </div>
       )}
 

@@ -28,6 +28,11 @@ class Interface(BaseModel):
 
     name: str
     status: DeviceStatus = DeviceStatus.UP
+    admin_status: Optional[str] = None  # "up" or "down" - admin state
+    alias: Optional[str] = None         # Port description
+    is_trunk: bool = False              # True if trunk port
+    poe_enabled: bool = False           # True if PoE powered
+    poe_power: Optional[float] = None   # Watts being delivered
     speed: int = 1000  # Mbps
     in_bps: int = 0
     out_bps: int = 0
