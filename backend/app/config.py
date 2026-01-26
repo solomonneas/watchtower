@@ -130,7 +130,7 @@ class SpeedtestConfig(BaseModel):
     """Speedtest polling configuration."""
 
     enabled: bool = False
-    interval_minutes: int = 15
+    interval_minutes: int = 5
     server_id: int | None = None  # None = automatic/closest
     interface: str | None = None  # None = default interface
     thresholds: SpeedtestThresholds = SpeedtestThresholds()
