@@ -22,6 +22,7 @@ export default function SpeedtestWidget() {
   const [state, setState] = useState<WidgetState>('loading')
   const [cooldown, setCooldown] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(true)
 
   // Fetch latest result on mount
   useEffect(() => {
@@ -145,112 +146,122 @@ export default function SpeedtestWidget() {
   return (
     <div className="p-4 border-b border-border-primary">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
+      <div
+        className="flex items-center justify-between cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
         <div className="flex items-center gap-2">
           <GlobeIcon />
           <h3 className="text-sm font-semibold text-text-primary">Internet Speed</h3>
         </div>
-        {result?.indicator && (
-          <div className={`w-2.5 h-2.5 rounded-full ${indicatorColor[result.indicator]}`} />
-        )}
+        <div className="flex items-center gap-2">
+          {result?.indicator && (
+            <div className={`w-2.5 h-2.5 rounded-full ${indicatorColor[result.indicator]}`} />
+          )}
+          <ChevronIcon expanded={expanded} />
+        </div>
       </div>
 
-      {state === 'no_data' ? (
-        <div className="text-center py-4">
-          <p className="text-sm text-text-muted mb-3">No speedtest data</p>
-          <button
-            onClick={triggerTest}
-            className="px-4 py-2 text-sm bg-accent-primary hover:bg-accent-primary/80 text-white rounded-lg transition-colors"
-          >
-            Run Test
-          </button>
-        </div>
-      ) : state === 'testing' ? (
-        <div className="text-center py-4">
-          <div className="inline-block animate-spin rounded-full h-6 w-6 border-2 border-accent-primary border-t-transparent mb-2" />
-          <p className="text-sm text-text-muted">Running speedtest...</p>
-        </div>
-      ) : result ? (
-        <>
-          {/* Speed display */}
-          <div className="grid grid-cols-2 gap-4 mb-3">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1 text-lg font-bold text-text-primary">
-                <DownArrow />
-                {result.download_mbps.toFixed(1)}
+      {expanded && (
+        <div className="mt-3">
+          {state === 'no_data' ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-text-muted mb-3">No speedtest data</p>
+              <button
+                onClick={triggerTest}
+                className="px-4 py-2 text-sm bg-accent-primary hover:bg-accent-primary/80 text-white rounded-lg transition-colors"
+              >
+                Run Test
+              </button>
+            </div>
+          ) : state === 'testing' ? (
+            <div className="text-center py-4">
+              <div className="inline-block animate-spin rounded-full h-6 w-6 border-2 border-accent-primary border-t-transparent mb-2" />
+              <p className="text-sm text-text-muted">Running speedtest...</p>
+            </div>
+          ) : result ? (
+            <>
+              {/* Speed display */}
+              <div className="grid grid-cols-2 gap-4 mb-3">
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-1 text-lg font-bold text-text-primary">
+                    <DownArrow />
+                    {result.download_mbps.toFixed(1)}
+                  </div>
+                  <div className="text-xs text-text-muted">Mbps Down</div>
+                </div>
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-1 text-lg font-bold text-text-primary">
+                    <UpArrow />
+                    {result.upload_mbps.toFixed(1)}
+                  </div>
+                  <div className="text-xs text-text-muted">Mbps Up</div>
+                </div>
               </div>
-              <div className="text-xs text-text-muted">Mbps Down</div>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1 text-lg font-bold text-text-primary">
-                <UpArrow />
-                {result.upload_mbps.toFixed(1)}
+
+              {/* Ping & Jitter */}
+              <div className="flex items-center justify-center gap-4 text-sm text-text-secondary mb-3">
+                <span>{result.ping_ms.toFixed(1)}ms ping</span>
+                <span className="text-text-muted">|</span>
+                <span>{result.jitter_ms.toFixed(1)}ms jitter</span>
               </div>
-              <div className="text-xs text-text-muted">Mbps Up</div>
-            </div>
-          </div>
 
-          {/* Ping & Jitter */}
-          <div className="flex items-center justify-center gap-4 text-sm text-text-secondary mb-3">
-            <span>{result.ping_ms.toFixed(1)}ms ping</span>
-            <span className="text-text-muted">|</span>
-            <span>{result.jitter_ms.toFixed(1)}ms jitter</span>
-          </div>
+              {/* Server info */}
+              {result.server_name && (
+                <div className="text-xs text-text-muted text-center mb-2">
+                  {result.server_name}
+                  {result.server_location && ` (${result.server_location})`}
+                </div>
+              )}
 
-          {/* Server info */}
-          {result.server_name && (
-            <div className="text-xs text-text-muted text-center mb-2">
-              {result.server_name}
-              {result.server_location && ` (${result.server_location})`}
-            </div>
-          )}
+              {/* Last test time */}
+              <div className="text-xs text-text-tertiary text-center mb-3">
+                Last test: {timeAgo(result.timestamp)}
+              </div>
 
-          {/* Last test time */}
-          <div className="text-xs text-text-tertiary text-center mb-3">
-            Last test: {timeAgo(result.timestamp)}
-          </div>
+              {/* Run test & Export buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={triggerTest}
+                  disabled={cooldown > 0}
+                  className={`flex-1 py-2 text-sm rounded-lg transition-colors ${
+                    cooldown > 0
+                      ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                      : 'bg-bg-tertiary hover:bg-bg-secondary text-text-primary'
+                  }`}
+                >
+                  {cooldown > 0 ? `Wait ${cooldown}s` : 'Run Test'}
+                </button>
+                <a
+                  href="/api/speedtest/export"
+                  download
+                  className="px-3 py-2 text-sm bg-bg-tertiary hover:bg-bg-secondary text-text-primary rounded-lg transition-colors flex items-center"
+                  title="Export CSV"
+                >
+                  <ExportIcon />
+                </a>
+              </div>
 
-          {/* Run test & Export buttons */}
-          <div className="flex gap-2">
-            <button
-              onClick={triggerTest}
-              disabled={cooldown > 0}
-              className={`flex-1 py-2 text-sm rounded-lg transition-colors ${
-                cooldown > 0
-                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                  : 'bg-bg-tertiary hover:bg-bg-secondary text-text-primary'
-              }`}
-            >
-              {cooldown > 0 ? `Wait ${cooldown}s` : 'Run Test'}
-            </button>
-            <a
-              href="/api/speedtest/export"
-              download
-              className="px-3 py-2 text-sm bg-bg-tertiary hover:bg-bg-secondary text-text-primary rounded-lg transition-colors flex items-center"
-              title="Export CSV"
-            >
-              <ExportIcon />
-            </a>
-          </div>
+              {/* Error display */}
+              {error && (
+                <div className="mt-2 text-xs text-status-red text-center">{error}</div>
+              )}
 
-          {/* Error display */}
-          {error && (
-            <div className="mt-2 text-xs text-status-red text-center">{error}</div>
-          )}
-
-          {/* Result link */}
-          {result.result_url && (
-            <a
-              href={result.result_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block mt-2 text-xs text-accent-primary hover:underline text-center"
-            >
-              View detailed result
-            </a>
-          )}
-        </>
-      ) : null}
+              {/* Result link */}
+              {result.result_url && (
+                <a
+                  href={result.result_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block mt-2 text-xs text-accent-primary hover:underline text-center"
+                >
+                  View detailed result
+                </a>
+              )}
+            </>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }
@@ -288,6 +299,19 @@ function ExportIcon() {
   return (
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+    </svg>
+  )
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`w-4 h-4 text-text-tertiary transition-transform ${expanded ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
     </svg>
   )
 }
