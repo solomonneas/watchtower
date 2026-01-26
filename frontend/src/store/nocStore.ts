@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Topology } from '../types/topology'
 import type { Device } from '../types/device'
 import type { Connection } from '../types/connection'
+import type { L3Topology, ViewMode } from '../types/vlan'
 
 type SpeedtestStatus = 'normal' | 'degraded' | 'down' | null
 
@@ -11,6 +12,11 @@ interface NocState {
   selectedDevice: Device | null
   selectedConnection: Connection | null
   speedtestStatus: SpeedtestStatus
+
+  // L3 topology state
+  viewMode: ViewMode
+  l3Topology: L3Topology | null
+  selectedVlans: Set<number>
 
   // UI state
   isLoading: boolean
@@ -32,6 +38,12 @@ interface NocState {
   toggleClusterExpanded: (clusterId: string) => void
   clearSelection: () => void
   setSpeedtestStatus: (status: SpeedtestStatus) => void
+
+  // L3 actions
+  setViewMode: (mode: ViewMode) => void
+  setL3Topology: (topology: L3Topology | null) => void
+  toggleVlanFilter: (vlanId: number) => void
+  clearVlanFilter: () => void
 }
 
 export const useNocStore = create<NocState>((set, get) => ({
@@ -40,6 +52,12 @@ export const useNocStore = create<NocState>((set, get) => ({
   selectedDevice: null,
   selectedConnection: null,
   speedtestStatus: null,
+
+  // L3 topology state
+  viewMode: 'l2',
+  l3Topology: null,
+  selectedVlans: new Set<number>(),
+
   isLoading: true,
   error: null,
   isConnected: false,
@@ -144,4 +162,22 @@ export const useNocStore = create<NocState>((set, get) => ({
   clearSelection: () => set({ selectedDevice: null, selectedConnection: null }),
 
   setSpeedtestStatus: (speedtestStatus) => set({ speedtestStatus }),
+
+  // L3 actions
+  setViewMode: (viewMode) => set({ viewMode }),
+
+  setL3Topology: (l3Topology) => set({ l3Topology }),
+
+  toggleVlanFilter: (vlanId) => {
+    const { selectedVlans } = get()
+    const newSelected = new Set(selectedVlans)
+    if (newSelected.has(vlanId)) {
+      newSelected.delete(vlanId)
+    } else {
+      newSelected.add(vlanId)
+    }
+    set({ selectedVlans: newSelected })
+  },
+
+  clearVlanFilter: () => set({ selectedVlans: new Set<number>() }),
 }))

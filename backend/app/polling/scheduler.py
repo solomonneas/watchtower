@@ -37,6 +37,8 @@ CACHE_HEALTH = "watchtower:health"
 CACHE_PROXMOX = "watchtower:proxmox"
 CACHE_PROXMOX_VMS = "watchtower:proxmox_vms"
 CACHE_LINKS = "watchtower:links"
+CACHE_VLANS = "watchtower:vlans"
+CACHE_VLAN_MEMBERSHIPS = "watchtower:vlan_memberships"
 CACHE_LAST_POLL = "watchtower:last_poll"
 
 
@@ -101,6 +103,16 @@ class PollingScheduler:
             next_run_time=dt.now(),  # Run immediately on startup
         )
 
+        # VLAN polling (for L3 topology view)
+        self._scheduler.add_job(
+            poll_vlans,
+            IntervalTrigger(seconds=polling.topology),
+            id="poll_vlans",
+            name="Poll VLANs from LibreNMS",
+            replace_existing=True,
+            next_run_time=dt.now(),  # Run immediately on startup
+        )
+
         # Proxmox polling (if configured)
         settings = get_settings()
         if settings.get_all_proxmox_configs():
@@ -146,6 +158,7 @@ class PollingScheduler:
             poll_device_status(),
             poll_alerts(),
             poll_links(),
+            poll_vlans(),
             poll_proxmox(),
             return_exceptions=True,
         )
@@ -407,6 +420,71 @@ async def poll_links() -> None:
 
     except Exception as e:
         logger.error("Failed to poll links: %s", e)
+
+
+async def poll_vlans() -> None:
+    """
+    Poll VLAN data from LibreNMS for L3 topology view.
+
+    Fetches all VLANs from /resources/vlans which includes device associations.
+    """
+    try:
+        async with LibreNMSClient() as client:
+            # Get all VLANs (includes device_id for each)
+            vlans = await client.get_vlans()
+
+            if not vlans:
+                logger.debug("No VLANs returned from LibreNMS")
+                return
+
+            # Build unique VLAN list (dedupe by vlan_vlan number) and track memberships
+            vlan_map: dict[int, dict[str, Any]] = {}
+            memberships: list[dict[str, Any]] = []
+
+            for vlan in vlans:
+                vlan_num = vlan.vlan_vlan
+                device_id = vlan.device_id
+
+                # Add to vlan_map
+                if vlan_num not in vlan_map:
+                    vlan_map[vlan_num] = {
+                        "vlan_id": vlan_num,
+                        "vlan_name": vlan.vlan_name,
+                        "device_ids": [],
+                    }
+
+                # Track device membership
+                if device_id and device_id not in vlan_map[vlan_num]["device_ids"]:
+                    vlan_map[vlan_num]["device_ids"].append(device_id)
+
+                # Add membership record
+                if device_id:
+                    memberships.append({
+                        "librenms_device_id": device_id,
+                        "vlan_id": vlan_num,
+                        "vlan_name": vlan.vlan_name,
+                        "is_untagged": True,  # Default - /resources/vlans doesn't include port-level tagging info
+                    })
+
+            # Convert vlan_map to list with device counts
+            vlan_data = [
+                {
+                    "vlan_id": v["vlan_id"],
+                    "vlan_name": v["vlan_name"],
+                    "device_count": len(v["device_ids"]),
+                    "device_ids": v["device_ids"],
+                }
+                for v in vlan_map.values()
+            ]
+
+        # Cache results
+        await redis_cache.set(CACHE_VLANS, vlan_data, ttl=600)
+        await redis_cache.set(CACHE_VLAN_MEMBERSHIPS, memberships, ttl=600)
+
+        logger.info("Polled %d VLANs, %d memberships from LibreNMS", len(vlan_data), len(memberships))
+
+    except Exception as e:
+        logger.error("Failed to poll VLANs: %s", e)
 
 
 async def poll_proxmox() -> None:

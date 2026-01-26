@@ -17,7 +17,13 @@ from app.models.device import Device, DeviceStatus, DeviceType, DeviceStats
 from app.models.topology import Topology, Cluster, Position
 from app.models.connection import Connection, ExternalLink, ConnectionEndpoint, ExternalTarget, ConnectionType, ConnectionStatus
 from app.models.device import Interface, ProxmoxStats
-from app.polling.scheduler import CACHE_DEVICES, CACHE_ALERTS, CACHE_HEALTH, CACHE_LINKS, CACHE_PROXMOX, CACHE_PROXMOX_VMS
+from app.models.vlan import (
+    Vlan, VlanMembership, L3Topology, L3TopologyNode, L3TopologyVlanGroup
+)
+from app.polling.scheduler import (
+    CACHE_DEVICES, CACHE_ALERTS, CACHE_HEALTH, CACHE_LINKS,
+    CACHE_PROXMOX, CACHE_PROXMOX_VMS, CACHE_VLANS, CACHE_VLAN_MEMBERSHIPS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -680,3 +686,122 @@ async def get_device_with_live_data(device_id: str) -> Device | None:
     """Get a single device with live data merged in."""
     topology = await get_aggregated_topology()
     return topology.devices.get(device_id)
+
+
+async def get_l3_topology() -> L3Topology:
+    """
+    Build L3 topology view grouped by VLAN.
+
+    Returns an L3Topology with:
+    - List of all VLANs with device counts
+    - List of all VLAN memberships mapped to topology device IDs
+    - VLAN groups with devices grouped by VLAN membership
+    - Gateway devices (devices participating in multiple VLANs)
+    """
+    # Load topology config for device ID mapping
+    topo_config = get_topology_config()
+    device_configs = topo_config.get("devices", {})
+
+    # Load cached data
+    librenms_devices = await redis_cache.get_json(CACHE_DEVICES) or []
+    vlans_data = await redis_cache.get_json(CACHE_VLANS) or []
+    memberships_data = await redis_cache.get_json(CACHE_VLAN_MEMBERSHIPS) or []
+
+    # Build LibreNMS ID to topology ID mapping
+    by_ip, by_hostname = build_librenms_indexes(librenms_devices)
+    librenms_to_topo: dict[int, str] = {}
+    for topo_device_id, config in device_configs.items():
+        librenms_data = match_librenms_device(topo_device_id, config, by_ip, by_hostname)
+        if librenms_data:
+            librenms_id = librenms_data.get("device_id")
+            librenms_to_topo[librenms_id] = topo_device_id
+
+    # Build VLAN list
+    vlans = [
+        Vlan(
+            vlan_id=v["vlan_id"],
+            vlan_name=v.get("vlan_name"),
+            device_count=v.get("device_count", 0),
+        )
+        for v in vlans_data
+    ]
+
+    # Map memberships to topology device IDs
+    memberships = []
+    device_vlans: dict[str, set[int]] = {}  # Track VLANs per device for gateway detection
+
+    for m in memberships_data:
+        librenms_id = m.get("librenms_device_id")
+        topo_device_id = librenms_to_topo.get(librenms_id)
+
+        if not topo_device_id:
+            continue  # Skip devices not in our topology
+
+        vlan_id = m.get("vlan_id")
+        membership = VlanMembership(
+            device_id=topo_device_id,
+            librenms_device_id=librenms_id,
+            port_name=m.get("port_name"),
+            vlan_id=vlan_id,
+            vlan_name=m.get("vlan_name"),
+            is_untagged=m.get("is_untagged", True),
+        )
+        memberships.append(membership)
+
+        # Track VLANs per device
+        if topo_device_id not in device_vlans:
+            device_vlans[topo_device_id] = set()
+        device_vlans[topo_device_id].add(vlan_id)
+
+    # Identify gateway devices (in multiple VLANs)
+    gateway_devices = [
+        device_id for device_id, vlan_set in device_vlans.items()
+        if len(vlan_set) > 1
+    ]
+
+    # Get device status for node building
+    topology = await get_aggregated_topology()
+
+    # Build VLAN groups with devices
+    vlan_groups = []
+    for vlan in vlans:
+        # Find all devices in this VLAN
+        vlan_device_ids = set()
+        for m in memberships:
+            if m.vlan_id == vlan.vlan_id:
+                vlan_device_ids.add(m.device_id)
+
+        # Build nodes for this VLAN
+        nodes = []
+        vlan_gateways = []
+        for device_id in vlan_device_ids:
+            device = topology.devices.get(device_id)
+            if not device:
+                continue
+
+            is_gateway = device_id in gateway_devices
+            node = L3TopologyNode(
+                device_id=device_id,
+                display_name=device.display_name,
+                status=device.status.value,
+                is_gateway=is_gateway,
+                vlan_ids=list(device_vlans.get(device_id, set())),
+            )
+            nodes.append(node)
+
+            if is_gateway:
+                vlan_gateways.append(device_id)
+
+        vlan_groups.append(L3TopologyVlanGroup(
+            vlan_id=vlan.vlan_id,
+            vlan_name=vlan.vlan_name,
+            devices=nodes,
+            gateway_devices=vlan_gateways,
+        ))
+
+    return L3Topology(
+        vlans=vlans,
+        memberships=memberships,
+        vlan_groups=vlan_groups,
+        gateway_devices=gateway_devices,
+    )

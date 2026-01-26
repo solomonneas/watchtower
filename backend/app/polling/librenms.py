@@ -81,6 +81,28 @@ class LibreNMSHealthSensor(BaseModel):
     sensor_limit_low: float | None = None
 
 
+class LibreNMSVlan(BaseModel):
+    """VLAN data from LibreNMS API"""
+    vlan_id: int
+    vlan_vlan: int  # Actual VLAN number
+    vlan_domain: int | None = None
+    vlan_name: str | None = None
+    vlan_type: str | None = None
+    vlan_mtu: int | None = None
+    device_id: int | None = None
+
+
+class LibreNMSDeviceVlan(BaseModel):
+    """Device VLAN membership from LibreNMS API"""
+    device_id: int
+    vlan_id: int  # Internal LibreNMS ID
+    vlan_vlan: int  # Actual VLAN number
+    vlan_name: str | None = None
+    port_id: int | None = None
+    ifName: str | None = None
+    untagged: int | None = None  # 1 = untagged, 0 = tagged
+
+
 class LibreNMSClient:
     """
     Async client for LibreNMS API v0
@@ -266,6 +288,40 @@ class LibreNMSClient:
         return values[0] if values else None
 
     # ─────────────────────────────────────────────────────────────
+    # VLAN endpoints
+    # ─────────────────────────────────────────────────────────────
+
+    async def get_vlans(self) -> list[LibreNMSVlan]:
+        """
+        Get all VLANs across all devices.
+
+        Returns:
+            List of VLANs with their IDs and names
+        """
+        try:
+            # Use /resources/vlans endpoint (not /vlans)
+            data = await self._get("/resources/vlans")
+            return [LibreNMSVlan(**v) for v in data.get("vlans", [])]
+        except httpx.HTTPStatusError:
+            return []
+
+    async def get_device_vlans(self, device_id: int | str) -> list[LibreNMSDeviceVlan]:
+        """
+        Get VLANs configured on a specific device with port mappings.
+
+        Args:
+            device_id: Device ID or hostname
+
+        Returns:
+            List of VLAN memberships including which ports are in each VLAN
+        """
+        try:
+            data = await self._get(f"/devices/{device_id}/vlans")
+            return [LibreNMSDeviceVlan(**v) for v in data.get("vlans", [])]
+        except httpx.HTTPStatusError:
+            return []
+
+    # ─────────────────────────────────────────────────────────────
     # Health check
     # ─────────────────────────────────────────────────────────────
 
@@ -304,3 +360,15 @@ async def fetch_all_links() -> list[LibreNMSLink]:
     """Fetch all CDP/LLDP links from LibreNMS"""
     async with LibreNMSClient() as client:
         return await client.get_all_links()
+
+
+async def fetch_all_vlans() -> list[LibreNMSVlan]:
+    """Fetch all VLANs from LibreNMS"""
+    async with LibreNMSClient() as client:
+        return await client.get_vlans()
+
+
+async def fetch_device_vlans(device_id: int | str) -> list[LibreNMSDeviceVlan]:
+    """Fetch VLANs for a specific device from LibreNMS"""
+    async with LibreNMSClient() as client:
+        return await client.get_device_vlans(device_id)

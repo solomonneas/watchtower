@@ -132,6 +132,7 @@ class SpeedtestConfig(BaseModel):
     enabled: bool = False
     interval_minutes: int = 15
     server_id: int | None = None  # None = automatic/closest
+    interface: str | None = None  # None = default interface
     thresholds: SpeedtestThresholds = SpeedtestThresholds()
     logging: SpeedtestLogging = SpeedtestLogging()
 

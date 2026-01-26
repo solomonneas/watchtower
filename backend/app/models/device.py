@@ -40,6 +40,11 @@ class Interface(BaseModel):
     errors_in: int = 0
     errors_out: int = 0
 
+    # VLAN info
+    vlan_id: Optional[int] = None       # Native/untagged VLAN
+    vlan_name: Optional[str] = None     # VLAN name
+    tagged_vlans: list[int] = []        # Tagged VLANs (for trunk ports)
+
 
 class DeviceStats(BaseModel):
     """Device performance statistics."""

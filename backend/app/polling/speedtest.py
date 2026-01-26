@@ -146,6 +146,11 @@ async def run_speedtest(server_id: int | None = None) -> SpeedtestResult:
     if server_id:
         cmd.extend(["--server-id", str(server_id)])
 
+    # Add interface if configured
+    config = get_config().speedtest
+    if config.interface:
+        cmd.extend(["--interface", config.interface])
+
     logger.info("Running speedtest: %s", " ".join(cmd))
 
     try:

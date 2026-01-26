@@ -2,6 +2,7 @@ import { apiClient } from './client'
 import type { Topology, TopologySummary } from '../types/topology'
 import type { Device, DeviceSummary } from '../types/device'
 import type { AlertSummary, Alert } from '../types/alert'
+import type { L3Topology } from '../types/vlan'
 
 // Topology
 export async function fetchTopology(): Promise<Topology> {
@@ -11,6 +12,11 @@ export async function fetchTopology(): Promise<Topology> {
 
 export async function fetchTopologySummary(): Promise<TopologySummary> {
   const response = await apiClient.get<TopologySummary>('/topology/summary')
+  return response.data
+}
+
+export async function fetchL3Topology(): Promise<L3Topology> {
+  const response = await apiClient.get<L3Topology>('/topology/l3')
   return response.data
 }
 

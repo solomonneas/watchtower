@@ -19,10 +19,13 @@ import { useNocStore } from '../../store/nocStore'
 import ClusterNode from './nodes/ClusterNode'
 import DeviceNode from './nodes/DeviceNode'
 import ExternalNode from './nodes/ExternalNode'
+import VlanGroupNode from './nodes/VlanGroupNode'
 import TrafficEdge from './edges/TrafficEdge'
 import PhysicalLinkEdge from './edges/PhysicalLinkEdge'
 import MermaidModal from './MermaidModal'
+import { fetchL3Topology } from '../../api/endpoints'
 import type { Topology, Cluster } from '../../types/topology'
+import type { L3Topology, ViewMode } from '../../types/vlan'
 
 // Sanitize ID for Mermaid (only alphanumeric and dashes allowed)
 function sanitizeMermaidId(id: string): string {
@@ -135,6 +138,7 @@ const nodeTypes = {
   cluster: ClusterNode,
   device: DeviceNode,
   external: ExternalNode,
+  vlanGroup: VlanGroupNode,
 } as const
 
 const edgeTypes = {
@@ -149,6 +153,7 @@ const NODE_SIZES: Record<string, { width: number; height: number }> = {
   cluster: { width: 180, height: 120 },
   device: { width: 160, height: 80 },
   external: { width: 140, height: 100 },
+  vlanGroup: { width: 220, height: 150 },
 }
 
 const PADDING = 40 // Padding between nodes
@@ -677,24 +682,158 @@ function topologyToEdges(
   return edges
 }
 
+// Convert L3 topology data to React Flow nodes
+function l3TopologyToNodes(
+  l3Topology: L3Topology,
+  selectedVlans: Set<number>,
+  savedPositions: Record<string, { x: number; y: number }>
+): Node[] {
+  const nodes: Node[] = []
+
+  // Filter VLAN groups if filter is active
+  const vlanGroups = selectedVlans.size > 0
+    ? l3Topology.vlan_groups.filter((g) => selectedVlans.has(g.vlan_id))
+    : l3Topology.vlan_groups
+
+  // Create VLAN group nodes in a grid layout
+  const cols = Math.ceil(Math.sqrt(vlanGroups.length))
+  const spacingX = 300
+  const spacingY = 250
+
+  vlanGroups.forEach((vlanGroup, index) => {
+    const nodeId = `vlan-${vlanGroup.vlan_id}`
+
+    // Use saved position or calculate grid position
+    const defaultPos = {
+      x: 100 + (index % cols) * spacingX,
+      y: 100 + Math.floor(index / cols) * spacingY,
+    }
+    const position = savedPositions[nodeId] || defaultPos
+
+    nodes.push({
+      id: nodeId,
+      type: 'vlanGroup',
+      position,
+      data: {
+        vlanGroup,
+      },
+    })
+  })
+
+  return nodes
+}
+
+// Convert L3 topology to React Flow edges (gateway connections between VLANs)
+function l3TopologyToEdges(l3Topology: L3Topology, selectedVlans: Set<number>): Edge[] {
+  const edges: Edge[] = []
+  const addedEdges = new Set<string>()
+
+  // Connect VLANs that share gateway devices
+  const vlanGroups = selectedVlans.size > 0
+    ? l3Topology.vlan_groups.filter((g) => selectedVlans.has(g.vlan_id))
+    : l3Topology.vlan_groups
+
+  // Build map of gateway device to VLANs
+  const gatewayToVlans = new Map<string, number[]>()
+  vlanGroups.forEach((vlanGroup) => {
+    vlanGroup.gateway_devices.forEach((gatewayId) => {
+      const vlans = gatewayToVlans.get(gatewayId) || []
+      vlans.push(vlanGroup.vlan_id)
+      gatewayToVlans.set(gatewayId, vlans)
+    })
+  })
+
+  // Create edges between VLANs that share gateways
+  gatewayToVlans.forEach((vlanIds) => {
+    for (let i = 0; i < vlanIds.length; i++) {
+      for (let j = i + 1; j < vlanIds.length; j++) {
+        const sourceId = `vlan-${vlanIds[i]}`
+        const targetId = `vlan-${vlanIds[j]}`
+        const edgeKey = [sourceId, targetId].sort().join('--')
+
+        if (!addedEdges.has(edgeKey)) {
+          addedEdges.add(edgeKey)
+          edges.push({
+            id: `l3-edge-${edgeKey}`,
+            source: sourceId,
+            target: targetId,
+            type: 'physical',
+            data: {
+              status: 'up',
+              connectionType: 'l3',
+              description: 'L3 Gateway Link',
+            },
+          })
+        }
+      }
+    }
+  })
+
+  return edges
+}
+
 function TopologyCanvasInner() {
   const topology = useNocStore((state) => state.topology)
   const expandedClusters = useNocStore((state) => state.expandedClusters)
   const selectDevice = useNocStore((state) => state.selectDevice)
   const toggleClusterExpanded = useNocStore((state) => state.toggleClusterExpanded)
   const speedtestStatus = useNocStore((state) => state.speedtestStatus)
+
+  // L3 state
+  const viewMode = useNocStore((state) => state.viewMode)
+  const setViewMode = useNocStore((state) => state.setViewMode)
+  const l3Topology = useNocStore((state) => state.l3Topology)
+  const setL3Topology = useNocStore((state) => state.setL3Topology)
+  const selectedVlans = useNocStore((state) => state.selectedVlans)
+  const toggleVlanFilter = useNocStore((state) => state.toggleVlanFilter)
+  const clearVlanFilter = useNocStore((state) => state.clearVlanFilter)
+
   const { fitView } = useReactFlow()
 
   const [resetCounter, setResetCounter] = useState(0)
   const [showMermaidModal, setShowMermaidModal] = useState(false)
   const [mermaidDiagram, setMermaidDiagram] = useState('')
+  const [l3Loading, setL3Loading] = useState(false)
   const savedPositionsRef = useRef<Record<string, { x: number; y: number }>>(
     loadSavedPositions()
   )
   const prevExpandedRef = useRef<Set<string>>(new Set())
 
+  // Fetch L3 topology when view mode changes to L3
+  useEffect(() => {
+    if (viewMode === 'l3' && !l3Topology) {
+      setL3Loading(true)
+      fetchL3Topology()
+        .then((data) => {
+          setL3Topology(data)
+          setL3Loading(false)
+          // Fit view after L3 data loads
+          setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 100)
+        })
+        .catch((err) => {
+          console.error('Failed to fetch L3 topology:', err)
+          setL3Loading(false)
+        })
+    }
+  }, [viewMode, l3Topology, setL3Topology, fitView])
+
+  // Handle view mode change
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode)
+    clearVlanFilter()
+    // Fit view after mode change
+    setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 100)
+  }, [setViewMode, clearVlanFilter, fitView])
+
   // Generate nodes and resolve overlaps
   const processedNodes = useMemo(() => {
+    // L3 mode
+    if (viewMode === 'l3') {
+      if (!l3Topology) return []
+      return l3TopologyToNodes(l3Topology, selectedVlans, savedPositionsRef.current)
+    }
+
+    // L2 mode
     if (!topology) return []
 
     let nodes = topologyToNodes(topology, expandedClusters, savedPositionsRef.current)
@@ -710,12 +849,17 @@ function TopologyCanvasInner() {
 
     return nodes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topology, expandedClusters, resetCounter])
+  }, [topology, l3Topology, viewMode, expandedClusters, selectedVlans, resetCounter])
 
-  const initialEdges = useMemo(
-    () => (topology ? topologyToEdges(topology, expandedClusters, speedtestStatus) : []),
-    [topology, expandedClusters, speedtestStatus]
-  )
+  const initialEdges = useMemo(() => {
+    // L3 mode
+    if (viewMode === 'l3') {
+      if (!l3Topology) return []
+      return l3TopologyToEdges(l3Topology, selectedVlans)
+    }
+    // L2 mode
+    return topology ? topologyToEdges(topology, expandedClusters, speedtestStatus) : []
+  }, [topology, l3Topology, viewMode, expandedClusters, selectedVlans, speedtestStatus])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(processedNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
@@ -762,8 +906,20 @@ function TopologyCanvasInner() {
     setShowMermaidModal(true)
   }, [topology])
 
-  // Update nodes when topology or expanded state changes
+  // Update nodes when topology, L3 topology, or view mode changes
   useEffect(() => {
+    // L3 mode
+    if (viewMode === 'l3') {
+      if (l3Topology) {
+        const newNodes = l3TopologyToNodes(l3Topology, selectedVlans, savedPositionsRef.current)
+        const newEdges = l3TopologyToEdges(l3Topology, selectedVlans)
+        setNodes(newNodes)
+        setEdges(newEdges)
+      }
+      return
+    }
+
+    // L2 mode
     if (topology) {
       let newNodes = topologyToNodes(topology, expandedClusters, savedPositionsRef.current)
 
@@ -792,7 +948,7 @@ function TopologyCanvasInner() {
       setNodes(newNodes)
       setEdges(topologyToEdges(topology, expandedClusters, speedtestStatus))
     }
-  }, [topology, expandedClusters, speedtestStatus, setNodes, setEdges, resetCounter, fitView])
+  }, [topology, l3Topology, viewMode, expandedClusters, selectedVlans, speedtestStatus, setNodes, setEdges, resetCounter, fitView])
 
   // Single click: select device for sidebar details
   const onNodeClick = useCallback(
@@ -819,7 +975,20 @@ function TopologyCanvasInner() {
     [toggleClusterExpanded]
   )
 
-  if (!topology) {
+  // Show loading state for L3 mode
+  if (viewMode === 'l3' && l3Loading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-text-secondary">
+        Loading L3 topology...
+      </div>
+    )
+  }
+
+  // Require data for the current view mode
+  if (viewMode === 'l2' && !topology) {
+    return null
+  }
+  if (viewMode === 'l3' && !l3Topology) {
     return null
   }
 
@@ -849,59 +1018,138 @@ function TopologyCanvasInner() {
         showInteractive={false}
       />
       <Panel position="top-right" className="flex flex-col gap-2">
-        {/* Buttons */}
-        <div className="flex gap-2">
+        {/* View Mode Toggle */}
+        <div className="bg-bg-secondary/95 border border-border-default rounded-md p-1.5 flex gap-1">
           <button
-            onClick={handleVisualizeMermaid}
-            className="px-3 py-1.5 text-xs bg-accent-cyan/20 border border-accent-cyan/40 rounded-md hover:bg-accent-cyan/30 text-accent-cyan transition-colors"
-            title="View topology as Mermaid diagram"
+            onClick={() => handleViewModeChange('l2')}
+            className={`px-3 py-1 text-xs rounded transition-colors ${
+              viewMode === 'l2'
+                ? 'bg-accent-cyan text-bg-primary'
+                : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
+            }`}
           >
-            Visualize
+            Physical (L2)
           </button>
           <button
-            onClick={handleExportMermaid}
-            className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
-            title="Export topology as Mermaid diagram"
+            onClick={() => handleViewModeChange('l3')}
+            className={`px-3 py-1 text-xs rounded transition-colors ${
+              viewMode === 'l3'
+                ? 'bg-accent-purple text-white'
+                : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
+            }`}
           >
-            Export Mermaid
-          </button>
-          <button
-            onClick={handleResetLayout}
-            className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
-            title="Reset all nodes to default positions"
-          >
-            Reset Layout
+            Logical (L3)
           </button>
         </div>
 
-        {/* Color Key */}
-        <div className="bg-bg-secondary/95 border border-border-default rounded-md p-2 text-xs">
-          <div className="font-medium text-text-primary mb-1.5">Link Colors</div>
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-[#3fb950] rounded" />
-              <span className="text-text-secondary">Healthy (Speedtest OK)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-[#58a6ff] rounded" />
-              <span className="text-text-secondary">Active Link</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-[#d29922] rounded" />
-              <span className="text-text-secondary">Degraded / Warning</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-0.5 bg-[#f85149] rounded" />
-              <span className="text-text-secondary">Down / Critical</span>
+        {/* L2 Mode Buttons */}
+        {viewMode === 'l2' && (
+          <div className="flex gap-2">
+            <button
+              onClick={handleVisualizeMermaid}
+              className="px-3 py-1.5 text-xs bg-accent-cyan/20 border border-accent-cyan/40 rounded-md hover:bg-accent-cyan/30 text-accent-cyan transition-colors"
+              title="View topology as Mermaid diagram"
+            >
+              Visualize
+            </button>
+            <button
+              onClick={handleExportMermaid}
+              className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
+              title="Export topology as Mermaid diagram"
+            >
+              Export Mermaid
+            </button>
+            <button
+              onClick={handleResetLayout}
+              className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
+              title="Reset all nodes to default positions"
+            >
+              Reset Layout
+            </button>
+          </div>
+        )}
+
+        {/* L3 Mode Buttons */}
+        {viewMode === 'l3' && (
+          <div className="flex gap-2">
+            <button
+              onClick={handleResetLayout}
+              className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
+              title="Reset all nodes to default positions"
+            >
+              Reset Layout
+            </button>
+          </div>
+        )}
+
+        {/* L2 Color Key */}
+        {viewMode === 'l2' && (
+          <div className="bg-bg-secondary/95 border border-border-default rounded-md p-2 text-xs">
+            <div className="font-medium text-text-primary mb-1.5">Link Colors</div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-0.5 bg-[#3fb950] rounded" />
+                <span className="text-text-secondary">Healthy (Speedtest OK)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-0.5 bg-[#58a6ff] rounded" />
+                <span className="text-text-secondary">Active Link</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-0.5 bg-[#d29922] rounded" />
+                <span className="text-text-secondary">Degraded / Warning</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-0.5 bg-[#f85149] rounded" />
+                <span className="text-text-secondary">Down / Critical</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* L3 VLAN Filter */}
+        {viewMode === 'l3' && l3Topology && (
+          <div className="bg-bg-secondary/95 border border-border-default rounded-md p-2 text-xs max-h-64 overflow-y-auto">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-medium text-text-primary">VLAN Filter</span>
+              {selectedVlans.size > 0 && (
+                <button
+                  onClick={clearVlanFilter}
+                  className="text-accent-purple hover:text-accent-purple/80"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="space-y-1">
+              {l3Topology.vlans.map((vlan) => (
+                <label
+                  key={vlan.vlan_id}
+                  className="flex items-center gap-2 cursor-pointer hover:bg-bg-tertiary p-1 rounded"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedVlans.has(vlan.vlan_id)}
+                    onChange={() => toggleVlanFilter(vlan.vlan_id)}
+                    className="accent-accent-purple"
+                  />
+                  <span className="text-text-secondary">
+                    VLAN {vlan.vlan_id}
+                    {vlan.vlan_name && <span className="text-text-muted ml-1">({vlan.vlan_name})</span>}
+                  </span>
+                  <span className="ml-auto text-text-muted">{vlan.device_count}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
       </Panel>
       <MiniMap
         className="!bg-bg-secondary !border-border-default"
         nodeColor={(node) => {
           if (node.type === 'external') return '#6e7681'
           if (node.type === 'device') return '#58a6ff'
+          if (node.type === 'vlanGroup') return '#a855f7'  // Purple for VLAN groups
           return '#39d5ff'
         }}
         maskColor="rgba(13, 17, 23, 0.8)"
