@@ -21,6 +21,7 @@ import DeviceNode from './nodes/DeviceNode'
 import ExternalNode from './nodes/ExternalNode'
 import TrafficEdge from './edges/TrafficEdge'
 import PhysicalLinkEdge from './edges/PhysicalLinkEdge'
+import MermaidModal from './MermaidModal'
 import type { Topology, Cluster } from '../../types/topology'
 
 // Sanitize ID for Mermaid (only alphanumeric and dashes allowed)
@@ -45,10 +46,12 @@ function generateMermaidDiagram(topology: Topology): string {
       if (device) {
         const safeId = sanitizeMermaidId(deviceId)
         const displayName = (device.display_name || deviceId).replace(/"/g, '\\"')
+        const ip = device.ip ? `<br/><small>${device.ip}</small>` : ''
+        const label = `${displayName}${ip}`
         // Use different shapes based on device type
-        const shape = device.device_type === 'switch' ? `{{"${displayName}"}}`
-                    : device.device_type === 'firewall' ? `[/"${displayName}"\\]`
-                    : `["${displayName}"]`
+        const shape = device.device_type === 'switch' ? `{{"${label}"}}`
+                    : device.device_type === 'firewall' ? `[/"${label}"\\]`
+                    : `["${label}"]`
         lines.push(`        ${safeId}${shape}`)
       }
     })
@@ -683,6 +686,8 @@ function TopologyCanvasInner() {
   const { fitView } = useReactFlow()
 
   const [resetCounter, setResetCounter] = useState(0)
+  const [showMermaidModal, setShowMermaidModal] = useState(false)
+  const [mermaidDiagram, setMermaidDiagram] = useState('')
   const savedPositionsRef = useRef<Record<string, { x: number; y: number }>>(
     loadSavedPositions()
   )
@@ -747,6 +752,14 @@ function TopologyCanvasInner() {
     const mermaidContent = generateMermaidDiagram(topology)
     const timestamp = new Date().toISOString().slice(0, 10)
     downloadFile(mermaidContent, `topology-${timestamp}.mmd`)
+  }, [topology])
+
+  // Visualize topology as Mermaid diagram in modal
+  const handleVisualizeMermaid = useCallback(() => {
+    if (!topology) return
+    const mermaidContent = generateMermaidDiagram(topology)
+    setMermaidDiagram(mermaidContent)
+    setShowMermaidModal(true)
   }, [topology])
 
   // Update nodes when topology or expanded state changes
@@ -835,21 +848,54 @@ function TopologyCanvasInner() {
         className="!bg-bg-secondary !border-border-default !rounded-lg"
         showInteractive={false}
       />
-      <Panel position="top-right" className="flex gap-2">
-        <button
-          onClick={handleExportMermaid}
-          className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
-          title="Export topology as Mermaid diagram"
-        >
-          Export Mermaid
-        </button>
-        <button
-          onClick={handleResetLayout}
-          className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
-          title="Reset all nodes to default positions"
-        >
-          Reset Layout
-        </button>
+      <Panel position="top-right" className="flex flex-col gap-2">
+        {/* Buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={handleVisualizeMermaid}
+            className="px-3 py-1.5 text-xs bg-accent-cyan/20 border border-accent-cyan/40 rounded-md hover:bg-accent-cyan/30 text-accent-cyan transition-colors"
+            title="View topology as Mermaid diagram"
+          >
+            Visualize
+          </button>
+          <button
+            onClick={handleExportMermaid}
+            className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
+            title="Export topology as Mermaid diagram"
+          >
+            Export Mermaid
+          </button>
+          <button
+            onClick={handleResetLayout}
+            className="px-3 py-1.5 text-xs bg-bg-secondary border border-border-default rounded-md hover:bg-bg-tertiary text-text-secondary hover:text-text-primary transition-colors"
+            title="Reset all nodes to default positions"
+          >
+            Reset Layout
+          </button>
+        </div>
+
+        {/* Color Key */}
+        <div className="bg-bg-secondary/95 border border-border-default rounded-md p-2 text-xs">
+          <div className="font-medium text-text-primary mb-1.5">Link Colors</div>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-[#3fb950] rounded" />
+              <span className="text-text-secondary">Healthy (Speedtest OK)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-[#58a6ff] rounded" />
+              <span className="text-text-secondary">Active Link</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-[#d29922] rounded" />
+              <span className="text-text-secondary">Degraded / Warning</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 bg-[#f85149] rounded" />
+              <span className="text-text-secondary">Down / Critical</span>
+            </div>
+          </div>
+        </div>
       </Panel>
       <MiniMap
         className="!bg-bg-secondary !border-border-default"
@@ -861,6 +907,11 @@ function TopologyCanvasInner() {
         maskColor="rgba(13, 17, 23, 0.8)"
         pannable
         zoomable
+      />
+      <MermaidModal
+        isOpen={showMermaidModal}
+        onClose={() => setShowMermaidModal(false)}
+        diagram={mermaidDiagram}
       />
     </ReactFlow>
   )
