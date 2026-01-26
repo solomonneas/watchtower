@@ -159,6 +159,13 @@ class PortGroupThresholds(BaseModel):
     critical_mbps: int = 800  # Red if above this
 
 
+class PortGroupLogging(BaseModel):
+    """CSV logging configuration for port group traffic."""
+
+    enabled: bool = True
+    path: str = "/opt/watchtower/data/port_groups.csv"
+
+
 class PortGroupConfig(BaseModel):
     """Configuration for a port group to monitor aggregate traffic."""
 
@@ -166,6 +173,7 @@ class PortGroupConfig(BaseModel):
     description: str = ""
     match_alias: str  # Pattern to match in ifAlias (case-insensitive)
     thresholds: PortGroupThresholds = PortGroupThresholds()
+    logging: PortGroupLogging = PortGroupLogging()
 
 
 class AppConfig(BaseModel):

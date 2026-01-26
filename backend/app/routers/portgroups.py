@@ -6,9 +6,12 @@ Endpoints for monitoring aggregate traffic on port groups (e.g., department conn
 
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.config import get_config
@@ -118,6 +121,52 @@ async def get_port_groups() -> list[PortGroupStats]:
         ))
 
     return results
+
+
+@router.get("/export/{group_name}")
+async def export_port_group_csv(group_name: str) -> FileResponse:
+    """
+    Download the CSV history file for a specific port group.
+
+    Args:
+        group_name: Name of the port group to export
+    """
+    config = get_config()
+
+    # Find the matching port group config
+    matching_group = None
+    for group in config.port_groups:
+        if group.name.lower() == group_name.lower():
+            matching_group = group
+            break
+
+    if not matching_group:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Port group '{group_name}' not found",
+        )
+
+    if not matching_group.logging.enabled:
+        raise HTTPException(
+            status_code=404,
+            detail="CSV logging is not enabled for this port group",
+        )
+
+    csv_path = Path(matching_group.logging.path)
+
+    if not csv_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No traffic history available yet",
+        )
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    safe_name = group_name.lower().replace(" ", "_")
+    return FileResponse(
+        path=csv_path,
+        filename=f"{safe_name}_traffic_{today}.csv",
+        media_type="text/csv",
+    )
 
 
 @router.get("/{group_name}")

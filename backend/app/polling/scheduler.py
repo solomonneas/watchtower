@@ -21,7 +21,7 @@ from app.polling.librenms import LibreNMSClient, LibreNMSDevice
 from app.polling.proxmox import ProxmoxClient
 from app.polling.speedtest import (
     run_speedtest,
-    log_to_csv,
+    log_to_csv as speedtest_log_to_csv,
     cache_result,
     CACHE_SPEEDTEST,
 )
@@ -138,6 +138,20 @@ class PollingScheduler:
                 next_run_time=dt.now(),  # Run immediately on startup
             )
             logger.info("Speedtest polling enabled: every %d minutes", interval_minutes)
+
+        # Port group polling (if configured with logging)
+        port_groups = self._config.port_groups
+        if port_groups and any(pg.logging.enabled for pg in port_groups):
+            from datetime import datetime as dt
+            self._scheduler.add_job(
+                poll_port_groups,
+                IntervalTrigger(seconds=60),  # Every minute (matches interface polling)
+                id="poll_port_groups",
+                name="Poll port group traffic and log to CSV",
+                replace_existing=True,
+                next_run_time=dt.now(),  # Run immediately on startup
+            )
+            logger.info("Port group logging enabled for %d groups", len(port_groups))
 
         self._scheduler.start()
         logger.info(
@@ -586,7 +600,7 @@ async def poll_speedtest() -> None:
         if logging_config and getattr(logging_config, "enabled", False):
             csv_path = getattr(logging_config, "path", None)
             if csv_path:
-                log_to_csv(result, csv_path)
+                speedtest_log_to_csv(result, csv_path)
 
         # Broadcast to WebSocket clients
         await broadcast_speedtest_result(result.to_dict())
@@ -599,6 +613,131 @@ async def poll_speedtest() -> None:
 
     except Exception as e:
         logger.error("Failed to poll speedtest: %s", e)
+
+
+async def poll_port_groups() -> None:
+    """
+    Poll port group traffic and log to CSV.
+    """
+    try:
+        config = get_config()
+        port_groups = config.port_groups
+
+        if not port_groups:
+            return
+
+        # Fetch all ports from LibreNMS
+        async with LibreNMSClient() as client:
+            all_ports = await client.get_ports()
+
+        timestamp = datetime.utcnow().isoformat()
+
+        for group in port_groups:
+            if not group.logging.enabled:
+                continue
+
+            # Filter ports matching this group's alias pattern (case-insensitive)
+            pattern = group.match_alias.lower()
+            matching_ports = [
+                p for p in all_ports
+                if p.ifAlias and pattern in p.ifAlias.lower()
+            ]
+
+            # Calculate aggregates (only from active ports)
+            active_ports = [p for p in matching_ports if p.ifOperStatus == "up"]
+            port_count = len(matching_ports)
+            active_port_count = len(active_ports)
+
+            # Sum traffic rates (bytes per second)
+            in_bps = sum(p.ifInOctets_rate or 0 for p in active_ports)
+            out_bps = sum(p.ifOutOctets_rate or 0 for p in active_ports)
+
+            # Convert to Mbps
+            in_mbps = (in_bps * 8) / 1_000_000
+            out_mbps = (out_bps * 8) / 1_000_000
+            total_mbps = in_mbps + out_mbps
+
+            # Determine status
+            if total_mbps >= group.thresholds.critical_mbps:
+                status = "critical"
+            elif total_mbps >= group.thresholds.warning_mbps:
+                status = "warning"
+            else:
+                status = "ok"
+
+            # Log to CSV
+            log_port_group_to_csv(
+                csv_path=group.logging.path,
+                timestamp=timestamp,
+                group_name=group.name,
+                in_mbps=round(in_mbps, 2),
+                out_mbps=round(out_mbps, 2),
+                total_mbps=round(total_mbps, 2),
+                active_ports=active_port_count,
+                total_ports=port_count,
+                status=status,
+            )
+
+        logger.debug("Polled %d port groups for CSV logging", len(port_groups))
+
+    except Exception as e:
+        logger.error("Failed to poll port groups: %s", e)
+
+
+def log_port_group_to_csv(
+    csv_path: str,
+    timestamp: str,
+    group_name: str,
+    in_mbps: float,
+    out_mbps: float,
+    total_mbps: float,
+    active_ports: int,
+    total_ports: int,
+    status: str,
+) -> None:
+    """
+    Append a port group traffic record to CSV.
+    """
+    import csv
+    from pathlib import Path
+
+    path = Path(csv_path)
+
+    # Ensure directory exists
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check if file exists to determine if we need headers
+    write_header = not path.exists()
+
+    try:
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+
+            if write_header:
+                writer.writerow([
+                    "timestamp",
+                    "group_name",
+                    "in_mbps",
+                    "out_mbps",
+                    "total_mbps",
+                    "active_ports",
+                    "total_ports",
+                    "status",
+                ])
+
+            writer.writerow([
+                timestamp,
+                group_name,
+                in_mbps,
+                out_mbps,
+                total_mbps,
+                active_ports,
+                total_ports,
+                status,
+            ])
+
+    except Exception as e:
+        logger.error("Failed to write port group to CSV %s: %s", csv_path, e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

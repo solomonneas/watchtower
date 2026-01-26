@@ -172,14 +172,33 @@ export default function PortGroupWidget() {
         )
       })}
 
-      {/* Last update time */}
-      {lastUpdate && (
-        <div className="text-xs text-text-tertiary text-center mt-3 pt-2 border-t border-border-primary">
-          Updated {formatTimeAgo(lastUpdate)}
+      {/* Export buttons and last update */}
+      <div className="mt-3 pt-2 border-t border-border-primary">
+        <div className="flex flex-wrap gap-2 justify-center mb-2">
+          {groups.map((group) => (
+            <button
+              key={group.name}
+              onClick={() => handleExport(group.name)}
+              className="px-2 py-1 text-xs bg-bg-tertiary hover:bg-bg-secondary text-text-secondary rounded transition-colors flex items-center gap-1"
+              title={`Export ${group.name} traffic history`}
+            >
+              <DownloadIcon />
+              {groups.length > 1 ? group.name : 'Export CSV'}
+            </button>
+          ))}
         </div>
-      )}
+        {lastUpdate && (
+          <div className="text-xs text-text-tertiary text-center">
+            Updated {formatTimeAgo(lastUpdate)}
+          </div>
+        )}
+      </div>
     </div>
   )
+
+  function handleExport(groupName: string) {
+    window.open(`/api/port-groups/export/${encodeURIComponent(groupName)}`, '_blank')
+  }
 }
 
 function formatTimeAgo(date: Date): string {
@@ -217,6 +236,14 @@ function UpArrow() {
   return (
     <svg className="w-4 h-4 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
     </svg>
   )
 }
