@@ -63,10 +63,10 @@ export default function MermaidModal({ isOpen, onClose, diagram }: MermaidModalP
 
         const { svg } = await mermaid.render('mermaid-diagram', diagram)
 
-        // Parse and insert the SVG safely using DOM methods
+        // Parse as HTML (not XML) since Mermaid SVG contains HTML labels like <br>
         const parser = new DOMParser()
-        const doc = parser.parseFromString(svg, 'image/svg+xml')
-        const svgElement = doc.documentElement
+        const doc = parser.parseFromString(svg, 'text/html')
+        const svgElement = doc.querySelector('svg')
 
         if (svgElement && containerRef.current) {
           svgElement.style.maxWidth = '100%'
