@@ -13,6 +13,7 @@ Self-hosted Network Operations Center dashboard providing real-time visualizatio
 - **Proxmox Integration** - Homarr-style panel with VMs, LXCs, and storage per node
 - **Auto-Discovery** - Automatic topology building from CDP/LLDP neighbor data
 - **Cisco Port Grid** - Physical switch port visualization matching hardware layout
+- **Port Group Monitoring** - Aggregate bandwidth tracking for groups of switch ports with CSV logging
 - **Speedtest Widget** - Scheduled speed testing with CSV logging and link health coloring
 - **Mermaid Diagrams** - Export topology as Mermaid diagrams with pan/zoom viewer
 - **Alert Management** - Real-time alerts with severity levels and toast notifications
@@ -82,6 +83,8 @@ See [docs/topology-setup.md](docs/topology-setup.md) for detailed topology confi
 | GET | /api/speedtest | Latest speedtest result |
 | POST | /api/speedtest/trigger | Run manual speedtest |
 | GET | /api/speedtest/export | Download speedtest CSV |
+| GET | /api/port-groups | Aggregate traffic for configured port groups |
+| GET | /api/port-groups/export/{name} | Download port group traffic CSV |
 | GET | /api/discovery/preview | Preview auto-discovered devices |
 | POST | /api/discovery/sync | Sync discovered devices to topology |
 | GET | /api/diagnostics/scheduler | View polling job status |
@@ -99,7 +102,8 @@ See [docs/topology-setup.md](docs/topology-setup.md) for detailed topology confi
 | Alerts | 30s | Active alert status |
 | CDP/LLDP Links | 5min | Neighbor discovery |
 | VLANs | 5min | VLAN membership for L3 view |
-| Speedtest | 15min | Internet speed (if enabled) |
+| Port Groups | 60s | Aggregate traffic with CSV logging |
+| Speedtest | 5min | Internet speed (if enabled) |
 
 ## WebSocket Events
 
@@ -120,6 +124,7 @@ See [docs/topology-setup.md](docs/topology-setup.md) for detailed topology confi
 - Real-time WebSocket updates
 - CDP/LLDP auto-discovery
 - Cisco port grid visualization
+- Port group traffic monitoring with CSV export
 - Speedtest widget with link health coloring
 - Mermaid diagram export with pan/zoom viewer
 
