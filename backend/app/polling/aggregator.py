@@ -340,6 +340,7 @@ async def get_aggregated_topology() -> Topology:
             proxmox_stats=proxmox_stats,
             alert_count=alert_count,
             last_seen=datetime.fromisoformat(last_polled) if last_polled else None,
+            librenms_device_id=librenms_device_id,
         )
 
     # Build clusters

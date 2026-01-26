@@ -105,6 +105,9 @@ class Device(BaseModel):
     alert_count: int = 0
     last_seen: Optional[datetime] = None
 
+    # LibreNMS integration
+    librenms_device_id: Optional[int] = None
+
 
 class DeviceSummary(BaseModel):
     """Lightweight device summary for lists."""
